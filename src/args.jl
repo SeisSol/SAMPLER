@@ -87,6 +87,7 @@ module Args
                                 The end timestamp is bounded by the last input timestamp.\n
                                 \tBy default, every timestep will be output."""
                 arg_type = Timespan
+                default = Timespan(-Inf64, Inf64)
             "input-file"
                 help = "The SeisSol output in XDMF format. Use either the 3D or 2D (surface) output."
                 required = true
