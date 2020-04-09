@@ -15,7 +15,7 @@ function main()
     args = Args.read_args()
 
     println("Using $(nthreads()) threads.")
-    XDMF.XDMFFile(args["input-file"], (750, 750))
+    XDMF.XDMFFile(args["input-file"], (100., 100., 100.))
 end
 
 main()
