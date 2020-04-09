@@ -5,7 +5,7 @@
 =#
 
 module Quadtrees
-    export Quadtree, quadtree_insert!, Quad, get_tetrahedra_at
+    export Quadtree, quadtree_insert!, Quad, Tetrahedron, get_tetrahedra_at!
 
     struct Quad
         x        :: Float64
@@ -14,9 +14,15 @@ module Quadtrees
         height   :: Float64
     end
 
+    struct Tetrahedron
+        id      :: Int32
+        aabb    :: NTuple{4, Float64}
+        points  :: AbstractArray{Float64, 2}
+    end
+
     mutable struct Quadtree
         region   :: Quad
-        contents :: AbstractArray{Tuple{Tuple{Float64,Float64,Float64,Float64}, Int32},1}
+        contents :: Array{Tetrahedron,1}
         xn_yn    :: Union{Quadtree, Nothing}
         xp_yn    :: Union{Quadtree, Nothing}
         xn_yp    :: Union{Quadtree, Nothing}
@@ -26,7 +32,9 @@ module Quadtrees
     @enum Quadrant center xn_yn xp_yn xn_yp xp_yp
 
     function Quadtree(region::Quad, tetrahedra::AbstractArray{Int64, 2}, points::AbstractArray{Float64, 2})
-        qt = Quadtree(deepcopy(region), Array{Int32,1}(), nothing, nothing, nothing, nothing)
+        qt = Quadtree(deepcopy(region), 
+                      Array{Tetrahedron,1}(), 
+                      nothing, nothing, nothing, nothing)
 
         num_tetrahedra = size(tetrahedra, 2)
         for tet_id :: Int32 ∈ 1:num_tetrahedra
@@ -36,16 +44,16 @@ module Quadtrees
             tet_points = [points[dim, point_id] for point_id in tetrahedron, dim in 1:3] # shape(t_points) = (4×3)
             tet_aabb = (minimum(tet_points[:, 1]), minimum(tet_points[:, 2]), 
                         maximum(tet_points[:, 1]), maximum(tet_points[:, 2]))
-            quadtree_insert!(qt, tet_aabb, tet_id)
+            quadtree_insert!(qt, Tetrahedron(tet_id, tet_aabb, tet_points))
         end
 
         return qt
     end
 
-    function quadtree_insert!(qt::Quadtree, bounds::Tuple{Float64,Float64, Float64, Float64}, tet_id::Int32)
-        q = get_quadrant(qt.region, bounds)
+    function quadtree_insert!(qt::Quadtree, tet::Tetrahedron)
+        q = get_quadrant(qt.region, tet.aabb)
         if q == center 
-            push!(qt.contents, (bounds, tet_id))
+            push!(qt.contents, tet)
             return
         end
 
@@ -62,34 +70,34 @@ module Quadtrees
 
             new_region = Quad(new_x, new_y, new_width, new_height)
 
-            new_tree = Quadtree(new_region, Array{Int32,1}(), nothing, nothing, nothing, nothing)
+            new_tree = Quadtree(new_region, 
+                                Array{Tetrahedron,1}(), 
+                                nothing, nothing, nothing, nothing)
+
             qt[q] = new_tree
-            quadtree_insert!(new_tree, bounds, tet_id)
-            quadtree_insert!(new_tree, bounds, tet_id)
+            quadtree_insert!(new_tree, tet)
+            quadtree_insert!(new_tree, tet)
         else # current_elem isa Quadtree
-            quadtree_insert!(current_elem, bounds, tet_id)
+            quadtree_insert!(current_elem, tet)
         end
     end
 
-    function get_tetrahedra_at(qt::Quadtree,x::Float64, y::Float64) :: Array{NTuple{4,Float64},1}
-        tetrahedra = []
-
-        current_node = qt
+    function get_tetrahedra_at!(qt::Quadtree, x::Float64, y::Float64, ret_tetrahedra::Array{Tetrahedron, 1})
+        empty!(ret_tetrahedra)
+        current_node :: Union{Quadtree, Nothing} = qt
         while !isnothing(current_node)
-            for (aabb, tet_id) ∈ current_node.contents
-                if x ≥ aabb[1] && x ≤ aabb[3] && y ≥ aabb[2] && y ≤ aabb[4]
-                    push!(tetrahedra, aabb)
+            for tet :: Tetrahedron ∈ current_node.contents
+                if x ≥ tet.aabb[1] && x ≤ tet.aabb[3] && y ≥ tet.aabb[2] && y ≤ tet.aabb[4]
+                    push!(ret_tetrahedra, tet)
                 end
             end
 
-            current_node = current_node[get_quadrant(current_node.region, x, y)]
+            quadrant :: Quadrant = get_quadrant(current_node.region, x, y)
+            current_node = current_node[quadrant]
         end
-
-        return tetrahedra
-        
     end
 
-    function get_quadrant(region::Quad, bounds::Tuple{Float64, Float64, Float64, Float64})
+    function get_quadrant(region::Quad, bounds::NTuple{4, Float64}) :: Quadrant
         # For numerical accuracy, coordinates are subtracted before comparing position within region
         # (coordinates have a larger domain than coordinates within a region)
 
@@ -112,9 +120,11 @@ module Quadtrees
         if is_left  && !is_btm return xn_yp end
         if !is_left && is_btm  return xp_yn end
         if !is_left && !is_btm return xp_yp end
+
+        return xn_yn # NEVER happens but compiler is now happy.
     end
 
-    function get_quadrant(region::Quad, x::Float64, y::Float64)
+    function get_quadrant(region::Quad, x::Float64, y::Float64) :: Quadrant
         is_left = x - region.x <= region.width * .5
         is_btm = y - region.y <= region.height * .5
 
@@ -122,9 +132,11 @@ module Quadtrees
         if is_left  && !is_btm return xn_yp end
         if !is_left && is_btm  return xp_yn end
         if !is_left && !is_btm return xp_yp end
+
+        return xn_yn # NEVER happens but compiler is now happy.
     end
 
-    function Base.getindex(collection::Quadtree, key::Quadrant)
+    function Base.getindex(collection::Quadtree, key::Quadrant) :: Union{Quadtree, Nothing}
         if key == xn_yn return collection.xn_yn end
         if key == xn_yp return collection.xn_yp end
         if key == xp_yn return collection.xp_yn end
