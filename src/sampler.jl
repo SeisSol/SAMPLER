@@ -10,7 +10,6 @@ include("xdmf.jl")
 
 using Base.Threads
 
-
 function main()
     args = Args.read_args()
 

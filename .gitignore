@@ -1,1 +1,3 @@
 .vscode
+*.mem
+profile.txt
