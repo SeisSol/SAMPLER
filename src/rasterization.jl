@@ -89,21 +89,6 @@ module Rasterization
 
         total_problems = length(times) * n_tetrahedra
 
-        thread_contexts = [
-            ThreadContext(
-                Array{Float64, 2}(undef, (4, 3)),
-                Array{Float64, 2}(undef, (4, 2)),
-                0, 0, 0,
-                0, 0, 0,
-                Array{UInt8, 2}(undef, (64, 64)),
-                Array{Float64, 1}(undef, 3),
-                Array{SubArray, 1}(undef, 4),
-                Array{Float64, 1}(undef, 3),
-                Array{TetrahedronFace, 1}(undef, 4),
-                0
-            ) for i ∈ 1:n_threads
-        ]
-
         println("Done.")
 
         start_time :: DateTime = now()
@@ -119,7 +104,17 @@ module Rasterization
             grid_sample_cnts .= 0
 
             Threads.@threads for thread_id ∈ 1:n_threads
-                ctxt = thread_contexts[thread_id]
+                ctxt = ThreadContext(
+                    Array{Float64, 2}(undef, (4, 3)),
+                    Array{Float64, 2}(undef, (4, 2)),
+                    0, 0, 0,
+                    0, 0, 0,
+                    Array{UInt8, 2}(undef, (64, 64)),
+                    Array{Float64, 1}(undef, 3),
+                    Array{SubArray, 1}(undef, 4),
+                    Array{Float64, 1}(undef, 3),
+                    Array{TetrahedronFace, 1}(undef, 4),
+                    0)
 
                 thread_range_min = floor(Int32, (thread_id - 1) * n_tetrahedra_per_thread) + 1
                 thread_range_max = thread_id == n_threads ? n_tetrahedra : floor(Int32, thread_id * n_tetrahedra_per_thread)
@@ -147,10 +142,10 @@ module Rasterization
                     if thread_id == 1
                         t_now = now()
                         if (t_now - last_printed_time) >= print_interval && ctxt.solved_problems > 0
-                            solved_problems = reduce((acc, context)->context.solved_problems+acc, thread_contexts, init=0)
+                            solved_problems = ctxt.solved_problems
 
                             last_printed_time = t_now
-                            etr = (t_now-start_time) * (total_problems - solved_problems) ÷ (solved_problems)
+                            etr = (t_now-start_time) * (total_problems ÷ n_threads - solved_problems) ÷ (solved_problems)
                             hh = floor(etr, Dates.Hour)
                             etr -= floor(hh, Dates.Millisecond)
                             mm = floor(etr, Dates.Minute)
@@ -162,7 +157,7 @@ module Rasterization
                                           solved_problems, 
                                           (iteration - 1) * n_times_per_iteration + 1,
                                           (iteration - 1) * n_times_per_iteration + n_times,
-                                          solved_problems/total_problems*100,
+                                          solved_problems/(total_problems/n_threads)*100,
                                           hh.value, mm.value, ss.value)
                             unlock(print_lock)
                         end
