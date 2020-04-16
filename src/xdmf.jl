@@ -22,21 +22,21 @@ module XDMF
         return (tetrahedra, points, times)
     end
 
-    function data_of(file_path::AbstractString, timestep::Int, vars...)
+    function data_of(file_path::AbstractString, vars...)
         xdmf = XDMFFile(file_path)
-        timestep_attrs = xdmf.timesteps[timestep]["Attribute"]
 
-        ret_array = Array{AbstractArray}(undef, length(vars))
-        for (varid, var) ∈ enumerate(vars)
+        ret_array = Array{AbstractArray, 2}(undef, (length(xdmf.timesteps), length(vars)))
+        for (varid, var) ∈ enumerate(vars), t ∈ 1:length(xdmf.timesteps)
+            timestep_attrs = xdmf.timesteps[t]["Attribute"]
             for i ∈ 1:length(timestep_attrs)
                 if timestep_attrs[i][:Name] == var
-                    ret_array[varid] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
+                    ret_array[t, varid] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
                     break
                 end
             end
         end
 
-        return Tuple(ret_array)
+        return ret_array
     end
 
     function XDMFFile(file_path::AbstractString)
@@ -90,8 +90,6 @@ module XDMF
         file_range = split(file_range, ' ')
         file_range = parse.(UInt, file_range)
         file_range = tuple(reverse(file_range)...) # Column-major order!
-
-        @assert file_range[2] == 1
 
         filename = binary_item[""]
         filename = joinpath(base_path, filename)
