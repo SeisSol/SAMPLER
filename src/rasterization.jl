@@ -4,6 +4,7 @@ module Rasterization
     using Dates
     using Printf
     using NetCDF
+    using Profile
 
     include("util.jl")
 
@@ -27,9 +28,10 @@ module Rasterization
         face_points     :: Array{SubArray, 1}
         n               :: Array{Float64, 1}
         tet_faces       :: Array{TetrahedronFace, 1}
+        solved_problems :: Int
     end
 
-    const EDGE_TOL = .0001
+    const EDGE_TOL = .0
 
     function rasterize(tetrahedra::AbstractArray{T, 2} where T <: Integer, 
                        points::AbstractArray{F, 2} where F <: AbstractFloat,
@@ -74,18 +76,17 @@ module Rasterization
 
         print("Allocating data structures and thread contexts... ")
 
-        grid_locks = [ReentrantLock() for x ∈ 1:8, y ∈ 1:8]
+        n_threads = nthreads()
+
+        grid_locks = [ReentrantLock() for x ∈ 1:n_threads, y ∈ 1:n_threads]
         grid_running_avg_u = Array{Float64, 3}(undef, (num_samples_y, num_samples_x, n_times_per_iteration))
         grid_running_avg_v = Array{Float64, 3}(undef, (num_samples_y, num_samples_x, n_times_per_iteration))
         grid_running_avg_w = Array{Float64, 3}(undef, (num_samples_y, num_samples_x, n_times_per_iteration))
         grid_sample_cnts = Array{UInt16, 2}(undef, (num_samples_y, num_samples_x))
 
         print_lock = ReentrantLock()
-        incr_lock = ReentrantLock()
-        n_threads = nthreads()
         n_tetrahedra = size(tetrahedra, 2)
 
-        solved_problems = 0
         total_problems = length(times) * n_tetrahedra
 
         thread_contexts = [
@@ -98,7 +99,8 @@ module Rasterization
                 Array{Float64, 1}(undef, 3),
                 Array{SubArray, 1}(undef, 4),
                 Array{Float64, 1}(undef, 3),
-                Array{TetrahedronFace, 1}(undef, 4)
+                Array{TetrahedronFace, 1}(undef, 4),
+                0
             ) for i ∈ 1:n_threads
         ]
 
@@ -119,12 +121,10 @@ module Rasterization
             Threads.@threads for thread_id ∈ 1:n_threads
                 ctxt = thread_contexts[thread_id]
 
-                lock(print_lock)
                 thread_range_min = floor(Int32, (thread_id - 1) * n_tetrahedra_per_thread) + 1
                 thread_range_max = thread_id == n_threads ? n_tetrahedra : floor(Int32, thread_id * n_tetrahedra_per_thread)
-                @printf("Thread %2d working on tetrahedra {%d, ..., %d}\n", thread_id, thread_range_min, thread_range_max)
-                unlock(print_lock)
 
+                @profile begin
                 for tet_id ∈ thread_range_min:thread_range_max
                     tetrahedron = (@view tetrahedra[:, tet_id])
                     for i ∈ 1:4, dim ∈ 1:3
@@ -138,7 +138,7 @@ module Rasterization
 
                     ctxt.x_min = floor(Int32,(ctxt.tet_aabb[1,1] - domain_x[1]) / sampling_rate[1]) + 1
                     ctxt.y_min = floor(Int32,(ctxt.tet_aabb[2,1] - domain_y[1]) / sampling_rate[2]) + 1
-                    ctxt.z_min = floor(Int32,(ctxt.tet_aabb[3,1] - domain_z[1]) / sampling_rate[3])
+                    ctxt.z_min = floor(Int32,(ctxt.tet_aabb[3,1] - domain_z[1]) / sampling_rate[3]) + 1
 
                     ctxt.x_max = ceil(Int32,(ctxt.tet_aabb[1,2] - domain_x[1]) / sampling_rate[1])
                     ctxt.y_max = ceil(Int32,(ctxt.tet_aabb[2,2] - domain_y[1]) / sampling_rate[2])
@@ -146,8 +146,9 @@ module Rasterization
 
                     if thread_id == 1
                         t_now = now()
-                        if (t_now - last_printed_time) >= print_interval && solved_problems > 0
-                            lock(print_lock)
+                        if (t_now - last_printed_time) >= print_interval && ctxt.solved_problems > 0
+                            solved_problems = reduce((acc, context)->context.solved_problems+acc, thread_contexts, init=0)
+
                             last_printed_time = t_now
                             etr = (t_now-start_time) * (total_problems - solved_problems) ÷ (solved_problems)
                             hh = floor(etr, Dates.Hour)
@@ -155,6 +156,8 @@ module Rasterization
                             mm = floor(etr, Dates.Minute)
                             etr -= floor(mm, Dates.Millisecond)
                             ss = floor(etr, Dates.Second)
+
+                            lock(print_lock)
                             @printf("Working on tetrahedron %d in timesteps %d-%d (%2.2f%% done). ETR: %02d:%02d:%02d    \r", 
                                           solved_problems, 
                                           (iteration - 1) * n_times_per_iteration + 1,
@@ -212,18 +215,18 @@ module Rasterization
                         if dist_p_excl < 0
                             ctxt.n = -ctxt.n
                             d = -d
-                            dist_p_excl = - dist_p_excl
+                            dist_p_excl = -dist_p_excl
                         end
 
                         ctxt.tet_faces[i] = TetrahedronFace((ctxt.n[1], ctxt.n[2], ctxt.n[3]), d, dist_p_excl)
                     end 
-                    
+
                     for x ∈ ctxt.x_min:ctxt.x_max
-                        ctxt.p[1] = x*sampling_rate[1] + domain_x[1]
+                        ctxt.p[1] = (x-1)*sampling_rate[1] + domain_x[1]
                         for y ∈ ctxt.y_min:ctxt.y_max
-                            ctxt.p[2] = y*sampling_rate[2] + domain_y[1]
+                            ctxt.p[2] = (y-1)*sampling_rate[2] + domain_y[1]
                             for z ∈ ctxt.z_min:ctxt.z_max
-                                ctxt.p[3] = z*sampling_rate[3] + domain_z[1]
+                                ctxt.p[3] = (z-1)*sampling_rate[3] + domain_z[1]
                             
                                 accepted = true
                                 # For each tetrahedron face, filter out cells that are not in the tetrahedron
@@ -233,8 +236,8 @@ module Rasterization
                                     # So, if p_excl and p lie on the same side, p is inside the tetrahedron
                                     dist_p = dot3(ctxt.p, face.n) + face.d
                                 
-                                    # The point lies approx. ON the face, trivially accept (resp. reject), in the tet on the lexicographically
-                                    # more positive (resp. negative) side of the face. This ensures that for two neighboring tetrahedra, the point is
+                                    # The point lies approx. ON the face, reject in the tet on the lexicographically
+                                    # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
                                     # only accepted for one of them.
                                     # Def.: lexicographical order: 
                                     #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
@@ -242,22 +245,21 @@ module Rasterization
                                     # normal vector in contrast to its negated counterpart.
                                     if (abs(dist_p) <= EDGE_TOL) 
                                         is_positive_side = 
-                                            (ctxt.n[1] > -ctxt.n[1]) || 
-                                            (ctxt.n[1] == -ctxt.n[1] && ctxt.n[2] > -ctxt.n[2]) || 
-                                            (ctxt.n[1] == -ctxt.n[1] && ctxt.n[2] == -ctxt.n[2] && ctxt.n[3] > -ctxt.n[3])
+                                            (ctxt.n[1] > 0.) || 
+                                            (ctxt.n[1] == 0. && ctxt.n[2] > 0.) || 
+                                            (ctxt.n[1] == 0. && ctxt.n[2] == 0. && ctxt.n[3] > 0.)
 
-                                        # Reject if in tetrahedron on face's lex. negative side; accept otherwise
+                                        # Reject if in tetrahedron on face's lex. negative side
                                         if !is_positive_side
                                             accepted = false
+                                            break
                                         end
-
-                                        break
                                     end
 
                                     # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
                                     # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
                                     # Therefore, we only need to check if dist_p is negative to reject p.
-                                    if dist_p < 0.
+                                    if dist_p < EDGE_TOL
                                         accepted = false
                                         break
                                     end
@@ -273,43 +275,41 @@ module Rasterization
 
 
                     # Acquire grid region locks for writeback
-                    lock_x_min = floor(Int32, ctxt.x_min / num_samples_x * 8) + 1
-                    lock_x_max =  ceil(Int32, ctxt.x_max / num_samples_x * 8)
-                    lock_y_min = floor(Int32, ctxt.y_min / num_samples_y * 8) + 1
-                    lock_y_max =  ceil(Int32, ctxt.y_max / num_samples_y * 8)
+                    lock_x_min = floor(Int32, ctxt.x_min / num_samples_x * n_threads) + 1
+                    lock_x_max =  ceil(Int32, ctxt.x_max / num_samples_x * n_threads)
+                    lock_y_min = floor(Int32, ctxt.y_min / num_samples_y * n_threads) + 1
+                    lock_y_max =  ceil(Int32, ctxt.y_max / num_samples_y * n_threads)
                     for x ∈ lock_x_min:lock_x_max
                         for y ∈ lock_y_min:lock_y_max
                             lock(grid_locks[y, x])
                         end
                     end
 
-                    i = 1
                     for x ∈ 1:ctxt.x_max-ctxt.x_min+1, y ∈ 1:ctxt.y_max-ctxt.y_min+1
                         num_samples = ctxt.tet_dict[y, x]
                         if num_samples > 0
                             x_ = x + ctxt.x_min - 1; y_ = y + ctxt.y_min - 1
                             total_samples = (grid_sample_cnts[y_, x_] += num_samples)
                             for t ∈ 1:n_times
-                                grid_running_avg_u[y_, x_, t] += (vars[t,1][tet_id]-grid_running_avg_u[y_, x_, t])
-                                                            *(num_samples/total_samples)
-                                grid_running_avg_v[y_, x_, t] += (vars[t,2][tet_id]-grid_running_avg_v[y_, x_, t])
-                                                            *(num_samples/total_samples)
-                                grid_running_avg_w[y_, x_, t] += (vars[t,3][tet_id]-grid_running_avg_w[y_, x_, t])
-                                                            *(num_samples/total_samples)
+                                grid_running_avg_u[y_, x_, t] += (vars[t,1][tet_id]-grid_running_avg_u[y_, x_, t])*(num_samples/total_samples)
+                                grid_running_avg_v[y_, x_, t] += (vars[t,2][tet_id]-grid_running_avg_v[y_, x_, t])*(num_samples/total_samples)
+                                grid_running_avg_w[y_, x_, t] += (vars[t,3][tet_id]-grid_running_avg_w[y_, x_, t])*(num_samples/total_samples)
                             end
-                            i += 1
                         end
                     end
 
-                    for x ∈ lock_x_min:lock_x_max
-                        for y ∈ lock_y_min:lock_y_max
+                    for x ∈ lock_x_max:-1:lock_x_min
+                        for y ∈ lock_y_max:-1:lock_y_min
                             unlock(grid_locks[y, x])
                         end
                     end
 
-                    lock(incr_lock)
-                    solved_problems+=n_times
-                    unlock(incr_lock)
+                    ctxt.solved_problems += n_times
+                end
+                end#profile
+
+                open("p-$thread_id.prof", "w") do p
+                    Profile.print(p)
                 end
             end
 
