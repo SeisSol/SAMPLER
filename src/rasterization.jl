@@ -98,9 +98,9 @@ module Rasterization
 
         for iteration ∈ 1:n_iterations
             n_times = min(length(times) - (iteration - 1) * n_times_per_iteration, n_times_per_iteration)
-            grid_running_avg_u[:,:,1:n_times] .= 0
-            grid_running_avg_v[:,:,1:n_times] .= 0
-            grid_running_avg_w[:,:,1:n_times] .= 0
+            @inbounds grid_running_avg_u[:,:,1:n_times] .= 0
+            @inbounds grid_running_avg_v[:,:,1:n_times] .= 0
+            @inbounds grid_running_avg_w[:,:,1:n_times] .= 0
             grid_sample_cnts .= 0
 
             Threads.@threads for thread_id ∈ 1:n_threads
@@ -119,7 +119,6 @@ module Rasterization
                 thread_range_min = floor(Int32, (thread_id - 1) * n_tetrahedra_per_thread) + 1
                 thread_range_max = thread_id == n_threads ? n_tetrahedra : floor(Int32, thread_id * n_tetrahedra_per_thread)
 
-                @profile begin
                 for tet_id ∈ thread_range_min:thread_range_max
                     tetrahedron = (@view tetrahedra[:, tet_id])
                     for i ∈ 1:4, dim ∈ 1:3
@@ -131,13 +130,13 @@ module Rasterization
                         ctxt.tet_aabb[dim, 2] = maximum(ctxt.tet_points[:, dim])
                     end
 
-                    ctxt.x_min = floor(Int32,(ctxt.tet_aabb[1,1] - domain_x[1]) / sampling_rate[1]) + 1
-                    ctxt.y_min = floor(Int32,(ctxt.tet_aabb[2,1] - domain_y[1]) / sampling_rate[2]) + 1
-                    ctxt.z_min = floor(Int32,(ctxt.tet_aabb[3,1] - domain_z[1]) / sampling_rate[3]) + 1
-
-                    ctxt.x_max = ceil(Int32,(ctxt.tet_aabb[1,2] - domain_x[1]) / sampling_rate[1])
-                    ctxt.y_max = ceil(Int32,(ctxt.tet_aabb[2,2] - domain_y[1]) / sampling_rate[2])
-                    ctxt.z_max = ceil(Int32,(ctxt.tet_aabb[3,2] - domain_z[1]) / sampling_rate[3])
+                    @inbounds ctxt.x_min = floor(Int32,(ctxt.tet_aabb[1,1] - domain_x[1]) / sampling_rate[1]) + 1
+                    @inbounds ctxt.y_min = floor(Int32,(ctxt.tet_aabb[2,1] - domain_y[1]) / sampling_rate[2]) + 1
+                    @inbounds ctxt.z_min = floor(Int32,(ctxt.tet_aabb[3,1] - domain_z[1]) / sampling_rate[3]) + 1
+          
+                    @inbounds ctxt.x_max = ceil(Int32,(ctxt.tet_aabb[1,2] - domain_x[1]) / sampling_rate[1])
+                    @inbounds ctxt.y_max = ceil(Int32,(ctxt.tet_aabb[2,2] - domain_y[1]) / sampling_rate[2])
+                    @inbounds ctxt.z_max = ceil(Int32,(ctxt.tet_aabb[3,2] - domain_z[1]) / sampling_rate[3])
 
                     if thread_id == 1
                         t_now = now()
@@ -169,22 +168,20 @@ module Rasterization
                         ctxt.tet_dict = Array{UInt8, 2}(undef, (num_current_cells_y * 2, num_current_cells_x * 2))
                     end
 
-                    for x ∈ 1:ctxt.x_max-ctxt.x_min+1, y ∈ 1:ctxt.y_max-ctxt.y_min+1
-                        ctxt.tet_dict[y,x] = 0
-                    end
+                    @inbounds ctxt.tet_dict[1:ctxt.y_max-ctxt.y_min+1, 1:ctxt.x_max-ctxt.x_min+1] .= 0
 
                     for i ∈ 1:4
-                        ctxt.face_points[i] = @view ctxt.tet_points[i,:]
+                        @inbounds ctxt.face_points[i] = @view ctxt.tet_points[i,:]
                     end
 
                     function cross3!(a, b, ret)
-                        ret[1] = (a[2]*b[3] - a[3]*b[2])
-                        ret[2] = (a[3]*b[1] - a[1]*b[3])
-                        ret[3] = (a[1]*b[2] - a[2]*b[1])
+                        @inbounds ret[1] = (a[2]*b[3] - a[3]*b[2])
+                        @inbounds ret[2] = (a[3]*b[1] - a[1]*b[3])
+                        @inbounds ret[3] = (a[1]*b[2] - a[2]*b[1])
                     end
 
                     function dot3(a, b)
-                        return a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+                        @inbounds return a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
                     end
 
                     # Array{(n, d, dist_p_excl)}
@@ -192,10 +189,10 @@ module Rasterization
                         # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
                         # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes, 
                         # it is inside the tetrahedron
-                        p_excl =    ctxt.face_points[i]
-                        p1 =        ctxt.face_points[(i%4)+1]
-                        p2 =        ctxt.face_points[((i+1)%4)+1]
-                        p3 =        ctxt.face_points[((i+2)%4)+1]
+                        @inbounds p_excl =    ctxt.face_points[i]
+                        @inbounds p1 =        ctxt.face_points[(i%4)+1]
+                        @inbounds p2 =        ctxt.face_points[((i+1)%4)+1]
+                        @inbounds p3 =        ctxt.face_points[((i+2)%4)+1]
                     
                         # Calculate Hesse normal form of the plane defined by p1, p2, p3
                         # Normal vector
@@ -213,20 +210,20 @@ module Rasterization
                             dist_p_excl = -dist_p_excl
                         end
 
-                        ctxt.tet_faces[i] = TetrahedronFace((ctxt.n[1], ctxt.n[2], ctxt.n[3]), d, dist_p_excl)
+                        @inbounds ctxt.tet_faces[i] = TetrahedronFace((ctxt.n[1], ctxt.n[2], ctxt.n[3]), d, dist_p_excl)
                     end 
 
                     for x ∈ ctxt.x_min:ctxt.x_max
-                        ctxt.p[1] = (x-1)*sampling_rate[1] + domain_x[1]
+                        @inbounds ctxt.p[1] = (x-1)*sampling_rate[1] + domain_x[1]
                         for y ∈ ctxt.y_min:ctxt.y_max
-                            ctxt.p[2] = (y-1)*sampling_rate[2] + domain_y[1]
+                            @inbounds ctxt.p[2] = (y-1)*sampling_rate[2] + domain_y[1]
                             for z ∈ ctxt.z_min:ctxt.z_max
-                                ctxt.p[3] = (z-1)*sampling_rate[3] + domain_z[1]
+                                @inbounds ctxt.p[3] = (z-1)*sampling_rate[3] + domain_z[1]
                             
                                 accepted = true
                                 # For each tetrahedron face, filter out cells that are not in the tetrahedron
                                 for i ∈ 1:4
-                                    face = ctxt.tet_faces[i]
+                                    @inbounds face = ctxt.tet_faces[i]
                                     # p_excl is ALWAYS on the "positive" side of the plane. 
                                     # So, if p_excl and p lie on the same side, p is inside the tetrahedron
                                     dist_p = dot3(ctxt.p, face.n) + face.d
@@ -239,7 +236,7 @@ module Rasterization
                                     # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
                                     # normal vector in contrast to its negated counterpart.
                                     if (abs(dist_p) <= EDGE_TOL) 
-                                        is_positive_side = 
+                                        @inbounds is_positive_side = 
                                             (ctxt.n[1] > 0.) || 
                                             (ctxt.n[1] == 0. && ctxt.n[2] > 0.) || 
                                             (ctxt.n[1] == 0. && ctxt.n[2] == 0. && ctxt.n[3] > 0.)
@@ -262,7 +259,7 @@ module Rasterization
 
                                 if accepted # accept cell and increment its 2D cell counter for the current tetrahedron by 1
                                     x_ = x - ctxt.x_min + 1; y_ = y - ctxt.y_min + 1
-                                    ctxt.tet_dict[y_,x_] += 1
+                                    @inbounds ctxt.tet_dict[y_,x_] += 1
                                 end
                             end
                         end
@@ -276,35 +273,30 @@ module Rasterization
                     lock_y_max =  ceil(Int32, ctxt.y_max / num_samples_y * n_threads)
                     for x ∈ lock_x_min:lock_x_max
                         for y ∈ lock_y_min:lock_y_max
-                            lock(grid_locks[y, x])
+                            @inbounds lock(grid_locks[y, x])
                         end
                     end
 
                     for x ∈ 1:ctxt.x_max-ctxt.x_min+1, y ∈ 1:ctxt.y_max-ctxt.y_min+1
-                        num_samples = ctxt.tet_dict[y, x]
+                        @inbounds num_samples = ctxt.tet_dict[y, x]
                         if num_samples > 0
                             x_ = x + ctxt.x_min - 1; y_ = y + ctxt.y_min - 1
-                            total_samples = (grid_sample_cnts[y_, x_] += num_samples)
-                            for t ∈ 1:n_times
-                                grid_running_avg_u[y_, x_, t] += (vars[t,1][tet_id]-grid_running_avg_u[y_, x_, t])*(num_samples/total_samples)
-                                grid_running_avg_v[y_, x_, t] += (vars[t,2][tet_id]-grid_running_avg_v[y_, x_, t])*(num_samples/total_samples)
-                                grid_running_avg_w[y_, x_, t] += (vars[t,3][tet_id]-grid_running_avg_w[y_, x_, t])*(num_samples/total_samples)
+                            @inbounds total_samples = (grid_sample_cnts[y_, x_] += num_samples)
+                            @simd for t ∈ 1:n_times
+                                @inbounds grid_running_avg_u[y_, x_, t] += (vars[t,1][tet_id]-grid_running_avg_u[y_, x_, t])*(num_samples/total_samples)
+                                @inbounds grid_running_avg_v[y_, x_, t] += (vars[t,2][tet_id]-grid_running_avg_v[y_, x_, t])*(num_samples/total_samples)
+                                @inbounds grid_running_avg_w[y_, x_, t] += (vars[t,3][tet_id]-grid_running_avg_w[y_, x_, t])*(num_samples/total_samples)
                             end
                         end
                     end
 
                     for x ∈ lock_x_max:-1:lock_x_min
                         for y ∈ lock_y_max:-1:lock_y_min
-                            unlock(grid_locks[y, x])
+                            @inbounds unlock(grid_locks[y, x])
                         end
                     end
 
                     ctxt.solved_problems += n_times
-                end
-                end#profile
-
-                open("p-$thread_id.prof", "w") do p
-                    Profile.print(p)
                 end
             end
 
