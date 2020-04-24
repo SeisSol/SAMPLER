@@ -19,6 +19,7 @@ using Base.Filesystem
 using Pkg
 
 Pkg.precompile()
+println("Done.")
 
 
 function main()

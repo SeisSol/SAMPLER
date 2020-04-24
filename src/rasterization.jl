@@ -147,7 +147,7 @@ module Rasterization
         # Sample tetrahedra and write to output
         #============================================#
 
-        println("RAM limit: ", Util.human_readable_size(mem_limit), "; Can work on ", n_times_per_iteration, 
+        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ", n_times_per_iteration, 
                 " timesteps at once (therefore needing ", n_iterations , " iterations).")
 
         for iteration ∈ 1:n_iterations
@@ -175,7 +175,6 @@ module Rasterization
                         bin_counts, iteration_grids, grid_sample_counts, print_progress=thread_id==1)
             end # for thread_id
 
-            println()
             println("Processing tets on bucket borders...")
 
             # Now, iterate over the remaining tets that lie ON bin edges and therefore could not be processed in parallel
@@ -377,9 +376,9 @@ module Rasterization
                     x_ = x + x_min - 1; y_ = y + y_min - 1
                     @inbounds total_samples = (grid_sample_counts[y_, x_] += num_samples)
                     for var_id ∈ 1:3
-                        for t ∈ time_start:time_start + n_times - 1
+                        for t ∈ 1:n_times
                             @inbounds avg = iteration_grids[var_id][y_, x_, t]
-                            @inbounds iteration_grids[var_id][y_, x_, t] = avg + (vars[tet_id, t, var_id]-avg)*(num_samples/total_samples)
+                            @inbounds iteration_grids[var_id][y_, x_, t] = avg + (vars[tet_id, time_start+t-1, var_id]-avg)*(num_samples/total_samples)
                         end
                     end
                 end
