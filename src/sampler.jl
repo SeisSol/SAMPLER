@@ -5,6 +5,7 @@ main:
 - Date: 2020-03-30
 =#
 
+include("util.jl")
 include("args.jl")
 include("xdmf.jl")
 include("rasterization.jl")
@@ -26,7 +27,7 @@ function main()
     tetrahedra, points, times = XDMF.grid_of(args["input-file"])
     var_names = ["u", "v", "w"]
     if Filesystem.isfile(args["output-file"]); Filesystem.rm(args["output-file"]) end
-    Rasterization.rasterize(tetrahedra, points, times, sampling_rate, XDMF.data_of(args["input-file"], var_names...), var_names, args["output-file"])
+    Rasterization.rasterize(tetrahedra, points, times, sampling_rate, XDMF.data_of(args["input-file"], var_names...), var_names, args["output-file"], args["memory-limit"])
 end
 
 main()

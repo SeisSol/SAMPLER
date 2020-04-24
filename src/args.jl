@@ -6,6 +6,7 @@
 
 module Args
     using ArgParse
+    using Main.Util
 
     export read_args
     export Timespan
@@ -88,6 +89,11 @@ module Args
                                 \tBy default, every timestep will be output."""
                 arg_type = Timespan
                 default = Timespan(-Inf64, Inf64)
+            "--memory-limit", "-m"
+                help = """The maximum amount of RAM the script should use. This is only a SOFT limit!\n
+                                \t Examples: 8G; 2T; 512M\n
+                                \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
+                default = "8G"
             "input-file"
                 help = "The SeisSol output in XDMF format. Use either the 3D or 2D (surface) output."
                 required = true
@@ -101,6 +107,7 @@ module Args
 
     function validate_args!(args::Dict)
         # TODO
+        args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
         return args
     end
 end

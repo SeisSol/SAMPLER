@@ -1,5 +1,5 @@
 module Util
-    export human_readable_size
+    export human_readable_size, parse_size
 
     const ORDERS_OF_MAGNITUDE = "KMGTPEZY"
 

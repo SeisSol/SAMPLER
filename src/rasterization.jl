@@ -5,8 +5,7 @@ module Rasterization
     using Printf
     using NetCDF
     using Profile
-
-    include("util.jl")
+    using Main.Util
 
     struct TetrahedronFace
         n               :: NTuple{3, Float64}
@@ -72,7 +71,7 @@ module Rasterization
         # synchronization & contention later on.
         #============================================#
 
-        print("Binning $n_tetrahedra tetrahedra into $(n_threads + 1) buckets... ")
+        print("Binning $n_tetrahedra tetrahedra into $(n_threads)+$(n_threads - 1)+1 buckets... ")
 
         bin_ids = Array{UInt8, 1}(undef, n_tetrahedra)
 
@@ -95,16 +94,30 @@ module Rasterization
                 @inbounds idx_x_min = floor(Int32,(coord_x_min - domain_x[1]) / sampling_rate[1]) + 1
                 @inbounds idx_x_max =  ceil(Int32,(coord_x_max - domain_x[1]) / sampling_rate[1])
 
-                bin_min = floor(Int32, idx_x_min / num_samples_x * n_threads) + 1
-                bin_max =  ceil(Int32, idx_x_max / num_samples_x * n_threads)
+                bin_id_l = floor(Int32, idx_x_min / num_samples_x * n_threads) + 1
+                bin_id_r =  ceil(Int32, idx_x_max / num_samples_x * n_threads)
 
-                bin_ids[tet_id] = (bin_min == bin_max) ? bin_min : 0
+                # n_bins := 2*n_threads
+                # bin i ∈ 1:n_bins contains the tets completely inside the column of bin i
+                # bin j ∈ n_bins+1:2*n_bins-1 contains tets that are overlapping across bin i and i+1
+                # bin k = 2*n_bins contains tets overlapping over more than 2 adjascent columns
+                if bin_id_l == bin_id_r
+                    bin_ids[tet_id] = bin_id_l
+                elseif bin_id_l == bin_id_r - 1
+                    bin_ids[tet_id] = n_threads + bin_id_l
+                else
+                    bin_ids[tet_id] = 2*n_threads
+                end
             end
         end
 
-        bin_counts = zeros(Int32, n_threads + 1)
-        for bin_id in bin_ids
-            bin_counts[bin_id+1] += 1
+        bin_counts = zeros(Int32, 2*n_threads)
+        for bin_id ∈ bin_ids
+            bin_counts[bin_id] += 1
+        end
+
+        for bin_id ∈ 1:length(bin_counts)
+            println(bin_counts[bin_id], " Tetrahedra in bin ", bin_id)
         end
 
         println("Done.")
@@ -138,11 +151,12 @@ module Rasterization
                 " timesteps at once (therefore needing ", n_iterations , " iterations).")
 
         for iteration ∈ 1:n_iterations
+            time_start = (iteration - 1) * n_times_per_iteration + 1
             n_times = min(length(times) - (iteration - 1) * n_times_per_iteration, n_times_per_iteration)
 
             prefetched_vars = Array{Float64, 3}(undef, (n_tetrahedra, n_times, n_vars))
             @profile begin
-                for var_id ∈ 1:n_vars, time ∈ 1:n_times
+                for var_id ∈ 1:n_vars, time ∈ time_start:time_start + n_times - 1
                     dest_offset = (var_id-1)*n_times*n_tetrahedra + (time-1)*n_tetrahedra + 1
                     copyto!(prefetched_vars, dest_offset, vars[time, var_id], 1, n_tetrahedra)
                 end
@@ -157,39 +171,51 @@ module Rasterization
                         tetrahedra, points, bin_ids, prefetched_vars,
                         domain_x, domain_y, domain_z, sampling_rate,
                         num_samples_x, num_samples_y, num_samples_z,
-                        n_times, iteration, total_problems, n_times_per_iteration,
-                        bin_counts, iteration_grids, grid_sample_counts)
+                        time_start, n_times, iteration, total_problems,
+                        bin_counts, iteration_grids, grid_sample_counts, print_progress=thread_id==1)
             end # for thread_id
 
             println()
             print("Processing tets on bucket borders... ")
 
             # Now, iterate over the remaining tets that lie ON bin edges and therefore could not be processed in parallel
-            iterate_tets!(0, n_threads, n_tetrahedra, 
+            Threads.@threads for thread_id ∈ 1:n_threads-1
+            iterate_tets!(n_threads + thread_id, n_threads, n_tetrahedra, 
                 tetrahedra, points, bin_ids, prefetched_vars,
                 domain_x, domain_y, domain_z, sampling_rate,
                 num_samples_x, num_samples_y, num_samples_z,
-                n_times, iteration, total_problems, n_times_per_iteration,
-                bin_counts, iteration_grids, grid_sample_counts)
+                time_start, n_times, iteration, total_problems,
+                bin_counts, iteration_grids, grid_sample_counts, print_progress=thread_id==1)
+            end # for thread_id
+
+            iterate_tets!(2*n_threads, n_threads, n_tetrahedra, 
+                tetrahedra, points, bin_ids, prefetched_vars,
+                domain_x, domain_y, domain_z, sampling_rate,
+                num_samples_x, num_samples_y, num_samples_z,
+                time_start, n_times, iteration, total_problems,
+                bin_counts, iteration_grids, grid_sample_counts, print_progress=true)
 
             println("Done.")
 
-            start = [1, 1, (iteration - 1) * n_times_per_iteration + 1]
+            print("Writing outputs for timesteps $(time_start-1)-$(time_start+n_times-2)... ")
+            
+            start = [1, 1, time_start]
             count = [num_samples_y, num_samples_x, n_times]
 
             for var_id ∈ 1:n_vars
                 ncwrite(iteration_grids[var_id], out_filename, var_names[var_id], start=start, count=count)
             end
+
+            println("Done.")
         end # for iteration
 
-        println()
     end # function rasterize
 
     @inline function iterate_tets!(thread_id, n_threads, n_tetrahedra, tetrahedra, points, bin_ids, vars, 
                           domain_x, domain_y, domain_z, sampling_rate, 
                           num_samples_x, num_samples_y, num_samples_z,
-                          n_times, iteration, total_problems, n_times_per_iteration,
-                          bin_counts, iteration_grids, grid_sample_counts)
+                          time_start, n_times, iteration, total_problems,
+                          bin_counts, iteration_grids, grid_sample_counts; print_progress=false)
 
         tet_points  = Array{Float64, 2}(undef, (4, 3))
         tet_aabb    = Array{Float64, 2}(undef, (3, 2))
@@ -201,16 +227,11 @@ module Rasterization
         p           = Array{Float64, 1}(undef, 3)
         n           = Array{Float64, 1}(undef, 3)
 
-        bin_width = (thread_id < n_threads) ? num_samples_x ÷ n_threads : num_samples_x - (n_threads-1)*(num_samples_x÷n_threads)
-        bin_offset = (thread_id-1)*(num_samples_x÷n_threads)
-
-        println("Thread $thread_id has bin width $bin_width")
-
         start_time = now()
         last_printed_time = start_time
         print_interval = Second(2)
         rasterized_tets = 0
-        total_tets = bin_counts[thread_id+1]
+        total_tets = bin_counts[thread_id]
 
         for tet_id ∈ 1:n_tetrahedra
             # Only process tetrahedra in thread's own bin
@@ -236,7 +257,7 @@ module Rasterization
             @inbounds y_max = ceil(Int32,(tet_aabb[2,2] - domain_y[1]) / sampling_rate[2])
             @inbounds z_max = ceil(Int32,(tet_aabb[3,2] - domain_z[1]) / sampling_rate[3])
 
-            if thread_id == 1
+            if print_progress
                 t_now = now()
                 if (t_now - last_printed_time) >= print_interval && rasterized_tets > 0
 
@@ -248,10 +269,10 @@ module Rasterization
                     etr -= floor(mm, Dates.Millisecond)
                     ss = floor(etr, Dates.Second)
 
-                    @printf("Working on tetrahedron %d of %d in timesteps %d-%d (%2.2f%% done). ETR: %02d:%02d:%02d    \r", 
+                    @printf("Working on tetrahedron %d of %d in timesteps %d-%d (%2.2f%% done). ETR: %02d:%02d:%02d\n", 
                             rasterized_tets, total_tets,
-                            (iteration - 1) * n_times_per_iteration + 1,
-                            (iteration - 1) * n_times_per_iteration + n_times,
+                            time_start - 1,           # Tools like ParaView work 0-indexed. Avoid confusion by outputting 0-indexed here.
+                            time_start + n_times - 2, # Tools like ParaView work 0-indexed. Avoid confusion by outputting 0-indexed here.
                             rasterized_tets/total_tets*100,
                             hh.value, mm.value, ss.value)
                 end
@@ -356,7 +377,7 @@ module Rasterization
                     x_ = x + x_min - 1; y_ = y + y_min - 1
                     @inbounds total_samples = (grid_sample_counts[y_, x_] += num_samples)
                     for var_id ∈ 1:3
-                        for t ∈ 1:n_times
+                        for t ∈ time_start:time_start + n_times - 1
                             @inbounds avg = iteration_grids[var_id][y_, x_, t]
                             @inbounds iteration_grids[var_id][y_, x_, t] = avg + (vars[tet_id, t, var_id]-avg)*(num_samples/total_samples)
                         end
