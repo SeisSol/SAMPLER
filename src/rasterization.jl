@@ -71,7 +71,7 @@ module Rasterization
         # synchronization & contention later on.
         #============================================#
 
-        print("Binning $n_tetrahedra tetrahedra into $(n_threads)+$(n_threads - 1)+1 buckets... ")
+        println("Binning $n_tetrahedra tetrahedra into $(n_threads)+$(n_threads - 1)+1 buckets...")
 
         bin_ids = Array{UInt8, 1}(undef, n_tetrahedra)
 
@@ -157,7 +157,7 @@ module Rasterization
             prefetched_vars = Array{Float64, 3}(undef, (n_tetrahedra, n_times, n_vars))
             @profile begin
                 for var_id ∈ 1:n_vars, time ∈ time_start:time_start + n_times - 1
-                    dest_offset = (var_id-1)*n_times*n_tetrahedra + (time-1)*n_tetrahedra + 1
+                    dest_offset = (var_id-1)*n_times*n_tetrahedra + (time-time_start)*n_tetrahedra + 1
                     copyto!(prefetched_vars, dest_offset, vars[time, var_id], 1, n_tetrahedra)
                 end
             end # profile
@@ -176,7 +176,7 @@ module Rasterization
             end # for thread_id
 
             println()
-            print("Processing tets on bucket borders... ")
+            println("Processing tets on bucket borders...")
 
             # Now, iterate over the remaining tets that lie ON bin edges and therefore could not be processed in parallel
             Threads.@threads for thread_id ∈ 1:n_threads-1
@@ -197,10 +197,10 @@ module Rasterization
 
             println("Done.")
 
-            print("Writing outputs for timesteps $(time_start-1)-$(time_start+n_times-2)... ")
+            println("Writing outputs for timesteps $(time_start-1)-$(time_start+n_times-2)...")
             
             start = [1, 1, time_start]
-            count = [num_samples_y, num_samples_x, n_times]
+            count = [-1, -1, n_times]
 
             for var_id ∈ 1:n_vars
                 ncwrite(iteration_grids[var_id], out_filename, var_names[var_id], start=start, count=count)
@@ -211,7 +211,7 @@ module Rasterization
 
     end # function rasterize
 
-    @inline function iterate_tets!(thread_id, n_threads, n_tetrahedra, tetrahedra, points, bin_ids, vars, 
+    function iterate_tets!(thread_id, n_threads, n_tetrahedra, tetrahedra, points, bin_ids, vars, 
                           domain_x, domain_y, domain_z, sampling_rate, 
                           num_samples_x, num_samples_y, num_samples_z,
                           time_start, n_times, iteration, total_problems,
