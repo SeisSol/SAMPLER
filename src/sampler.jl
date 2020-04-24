@@ -16,6 +16,9 @@ using NetCDF
 using Profile
 using Printf
 using Base.Filesystem
+using Pkg
+
+Pkg.precompile()
 
 
 function main()
