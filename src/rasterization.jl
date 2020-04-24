@@ -378,7 +378,7 @@ module Rasterization
                     for var_id ∈ 1:3
                         for t ∈ 1:n_times
                             @inbounds avg = iteration_grids[var_id][y_, x_, t]
-                            @inbounds iteration_grids[var_id][y_, x_, t] = avg + (vars[tet_id, time_start+t-1, var_id]-avg)*(num_samples/total_samples)
+                            @inbounds iteration_grids[var_id][y_, x_, t] = avg + (vars[tet_id, t, var_id]-avg)*(num_samples/total_samples)
                         end
                     end
                 end
