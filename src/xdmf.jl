@@ -13,24 +13,24 @@ module XDMF
     function grid_of(file_path::AbstractString)
         xdmf = XDMFFile(file_path)
 
-        # Memory-map geometry (points) and topology (tetrahedra) files.
+        # Memory-map geometry (points) and topology (simplices (triangles/tetrahedra)) files.
         # Since the ids of the points referred to in topo_item start at 0 (and Julia counts from 1) we have to add 1.
-        tetrahedra = mmap_data_item(xdmf.timesteps[1]["Topology"]["DataItem"], xdmf.base_path) .+ 1
+        simplices = mmap_data_item(xdmf.timesteps[1]["Topology"]["DataItem"], xdmf.base_path) .+ 1
         points     = mmap_data_item(xdmf.timesteps[1]["Geometry"]["DataItem"], xdmf.base_path)
         times = map(data_item -> parse(Float64, data_item["Time"][:Value]), xdmf.timesteps)
 
-        return (tetrahedra, points, times)
+        return (simplices, points, times)
     end
 
-    function data_of(file_path::AbstractString, vars...)
+    function data_of(file_path::AbstractString, var_names...)
         xdmf = XDMFFile(file_path)
 
-        ret_array = Array{AbstractArray, 2}(undef, (length(xdmf.timesteps), length(vars)))
-        for (varid, var) ∈ enumerate(vars), t ∈ 1:length(xdmf.timesteps)
+        ret_array = Array{AbstractArray, 2}(undef, (length(xdmf.timesteps), length(var_names)))
+        for (var_id, var_name) ∈ enumerate(var_names), t ∈ 1:length(xdmf.timesteps)
             timestep_attrs = xdmf.timesteps[t]["Attribute"]
             for i ∈ 1:length(timestep_attrs)
-                if timestep_attrs[i][:Name] == var
-                    ret_array[t, varid] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
+                if timestep_attrs[i][:Name] == var_name
+                    ret_array[t, var_id] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
                     break
                 end
             end
