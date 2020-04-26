@@ -7,10 +7,9 @@ module Rasterization
     using Profile
     using Main.Util
 
-    struct TetrahedronFace
-        n               :: NTuple{3, Float64}
+    struct HesseNormalForm
+        n0              :: NTuple{3, Float64}
         d               :: Float64
-        dist_p_excl     :: Float64
     end
 
     mutable struct ThreadContext
@@ -20,7 +19,7 @@ module Rasterization
         p               :: Array{Float64, 1}
         face_points     :: Array{SubArray, 1}
         n               :: Array{Float64, 1}
-        tet_faces       :: Array{TetrahedronFace, 1}
+        tet_faces       :: Array{HesseNormalForm, 1}
     end
 
     const EDGE_TOL = .0
@@ -33,15 +32,10 @@ module Rasterization
     =#
 
     function rasterize(
-        tetrahedra          :: AbstractArray{INDEX_TYPE, 2}, 
-        points_3d           :: AbstractArray{Float64, 2},
-        vars_3d             :: AbstractArray{A where A <: AbstractArray, 2},
-        var_names_3d        :: AbstractArray,
-        triangles           :: AbstractArray{INDEX_TYPE, 2}, 
-        points_2d           :: AbstractArray{Float64, 2},
-        vars_2d             :: AbstractArray{A where A <: AbstractArray, 2}, 
-        var_names_floor     :: AbstractArray,
-        var_names_surface   :: AbstractArray,
+        simplices           :: AbstractArray{INDEX_TYPE, 2}, 
+        points              :: AbstractArray{Float64, 2},
+        vars                :: AbstractArray{A where A <: AbstractArray, 2},
+        var_names           :: AbstractArray,
         times               :: AbstractArray{Float64, 1}, 
         sampling_rate       :: NTuple{3, Float64}, 
         out_filename        :: AbstractString,
@@ -60,15 +54,16 @@ module Rasterization
         #   d_  : Date & Time
         #   mMN_: M×N Matrix
         #   vN_ : N-Dimensional Vector
+        #   s_  : String
         #============================================#
 
         #============================================#
         # Gather domain information
         #============================================#
 
-        i_domain_x = (minimum(points_3d[1,:]), maximum(points_3d[1,:]))
-        i_domain_y = (minimum(points_3d[2,:]), maximum(points_3d[2,:]))
-        i_domain_z = (minimum(points_3d[3,:]), maximum(points_3d[3,:]))
+        i_domain_x = (minimum(points[1,:]), maximum(points[1,:]))
+        i_domain_y = (minimum(points[2,:]), maximum(points[2,:]))
+        i_domain_z = (minimum(points[3,:]), maximum(points[3,:]))
 
         println("Domain is $i_domain_x × $i_domain_y × $i_domain_z.")
 
@@ -87,35 +82,40 @@ module Rasterization
         b_mem_per_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
         b_mem_static                = sizeof(UInt16)  * n_samples_x * n_samples_y + 1024^2*n_threads
 
-        n_vars_3d                   = length(var_names_3d)
-        n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_vars_3d * b_mem_per_var_and_timestep)
+        n_vars                      = length(var_names)
+        n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_vars * b_mem_per_var_and_timestep)
         n_iterations                = ceil(Int, length(times) / n_timesteps_per_iteration)
         
-        n_tetrahedra                = size(tetrahedra, 2)
-        n_tetrahedra_per_thread     = n_tetrahedra / n_threads
-        n_total_problems            = length(times) * n_tetrahedra
+        n_simplex_points            = size(simplices, 1)
+        n_dims                      = n_simplex_points - 1
+        n_simplices                 = size(simplices, 2)
+        n_simplices_per_thread      = n_simplices / n_threads
+        n_total_problems            = length(times) * n_simplices
+
+        s_simplex_name              = n_dims == 3 ? "tetrahedron" : "triangle"
+        s_simplex_name_plural       = n_dims == 3 ? "tetrahedra" : "triangles"
 
         #============================================#
         # Put tetrahedra into bins to avoid thread
         # synchronization & lock contention later on.
         #============================================#
 
-        println("Binning $n_tetrahedra tetrahedra into $(n_threads)+$(n_threads - 1)+1 buckets...")
+        println("Binning $n_simplices $s_simplex_name_plural into $(n_threads)+$(n_threads - 1)+1 buckets...")
 
         # For each tetrahedron, assign a bin with an ID ∈ 1:2*n_threads based on its location
-        l_bin_ids = Array{UInt8, 1}(undef, n_tetrahedra)
+        l_bin_ids = Array{UInt8, 1}(undef, n_simplices)
 
         Threads.@threads for thread_id ∈ 1:n_threads
-            thread_range_min = floor(INDEX_TYPE, (thread_id - 1) * n_tetrahedra_per_thread) + 1
-            thread_range_max = thread_id == n_threads ? n_tetrahedra : floor(INDEX_TYPE, thread_id * n_tetrahedra_per_thread)
+            thread_range_min = floor(INDEX_TYPE, (thread_id - 1) * n_simplices_per_thread) + 1
+            thread_range_max = thread_id == n_threads ? n_simplices : floor(INDEX_TYPE, thread_id * n_simplices_per_thread)
 
-            m43_tet_points = Array{Float64, 2}(undef, (4, 3))
+            m43_tet_points = Array{Float64, 2}(undef, (n_simplex_points, 3))
             m32_tet_aabb   = Array{Float64, 2}(undef, (3, 2))
 
             for tet_id ∈ thread_range_min:thread_range_max
-                tetrahedron = (@view tetrahedra[:, tet_id])
-                for i ∈ 1:4, dim ∈ 1:3
-                    m43_tet_points[i, dim] = points_3d[dim, tetrahedron[i]]
+                tetrahedron = (@view simplices[:, tet_id])
+                for i ∈ 1:n_simplex_points, dim ∈ 1:3
+                    m43_tet_points[i, dim] = points[dim, tetrahedron[i]]
                 end
 
                 coord_x_min = minimum(m43_tet_points[:, 1])
@@ -148,7 +148,7 @@ module Rasterization
         end
 
         for bin_id ∈ 1:length(l_bin_counts)
-            println(l_bin_counts[bin_id], " Tetrahedra in bin ", bin_id)
+            println(l_bin_counts[bin_id], " ", s_simplex_name_plural, " in bin ", bin_id)
         end
 
         println("Done.")
@@ -157,19 +157,19 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        nccreate(out_filename, var_names_3d[1], 
+        nccreate(out_filename, var_names[1], 
                  "y", [i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y], 
                  "x", [i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x], 
                  "time", times, Dict("units"=>"seconds"))
 
-        for var_id ∈ 2:n_vars_3d
-            nccreate(out_filename, var_names_3d[var_id], 
+        for var_id ∈ 2:n_vars
+            nccreate(out_filename, var_names[var_id], 
                      "y", "x", "time")
         end
 
         # These are the grids that will be written to the NetCDF output later on.
-        l_iter_output_grids = Array{Array{Float64, 3}, 1}(undef, n_vars_3d)
-        for var_id ∈ 1:n_vars_3d
+        l_iter_output_grids = Array{Array{Float64, 3}, 1}(undef, n_vars)
+        for var_id ∈ 1:n_vars
             l_iter_output_grids[var_id] = Array{Float64, 3}(undef, (n_samples_y, n_samples_x, n_timesteps_per_iteration))
         end
 
@@ -199,11 +199,11 @@ module Rasterization
             # and D R A S T I C A L L Y improves runtime.
             #============================================#
 
-            prefetched_vars = Array{Float64, 3}(undef, (n_tetrahedra, n_times, n_vars_3d))
+            prefetched_vars = Array{Float64, 3}(undef, (n_simplices, n_times, n_vars))
             @profile begin
-                for var_id ∈ 1:n_vars_3d, time ∈ t_start:t_start + n_times - 1
-                    dest_offset = (var_id-1)*n_times*n_tetrahedra + (time-t_start)*n_tetrahedra + 1
-                    copyto!(prefetched_vars, dest_offset, vars_3d[time, var_id], 1, n_tetrahedra)
+                for var_id ∈ 1:n_vars, time ∈ t_start:t_start + n_times - 1
+                    dest_offset = (var_id-1)*n_times*n_simplices + (time-t_start)*n_simplices + 1
+                    copyto!(prefetched_vars, dest_offset, vars[time, var_id], 1, n_simplices)
                 end
             end # profile
 
@@ -228,35 +228,38 @@ module Rasterization
             Threads.@threads for thread_id ∈ 1:n_threads
                 iterate_tets!(
                     thread_id,         l_bin_ids,   l_bin_counts,
-                    n_tetrahedra,      tetrahedra,  points_3d, prefetched_vars,
+                    n_simplices,       simplices,   points, prefetched_vars,
                     i_domain_x,        i_domain_y,  i_domain_z,
                     n_samples_x,       n_samples_y, n_samples_z,
                     sampling_rate,     t_start,     n_times,
-                    l_iter_output_grids, myx_output_sample_counts, print_progress = (thread_id == n_threads ÷ 2))
+                    l_iter_output_grids, myx_output_sample_counts, n_simplex_points,
+                    print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
-            println("Processing tets on bucket borders...")
+            println("Processing $s_simplex_name_plural on bucket borders...")
 
             # Now, iterate over the remaining tets that lie ON bin edges and therefore could not be processed in parallel
             # with the normal bins without conflict
             Threads.@threads for thread_id ∈ 1:n_threads-1
                 iterate_tets!(
                     n_threads + thread_id, l_bin_ids,   l_bin_counts,
-                    n_tetrahedra,          tetrahedra,  points_3d, prefetched_vars,
+                    n_simplices,           simplices,   points, prefetched_vars,
                     i_domain_x,            i_domain_y,  i_domain_z,
                     n_samples_x,           n_samples_y, n_samples_z,
                     sampling_rate,         t_start,     n_times,
-                    l_iter_output_grids,     myx_output_sample_counts, print_progress = (thread_id == n_threads ÷ 2))
+                    l_iter_output_grids,     myx_output_sample_counts, n_simplex_points, 
+                    print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             # Lastly, the tets that overlapped multiple bins (practically never occurs!)
             iterate_tets!(
                 2 * n_threads,     l_bin_ids,   l_bin_counts,
-                n_tetrahedra,      tetrahedra,  points_3d, prefetched_vars,
+                n_simplices,       simplices,   points, prefetched_vars,
                 i_domain_x,        i_domain_y,  i_domain_z,
                 n_samples_x,       n_samples_y, n_samples_z,
                 sampling_rate,     t_start,     n_times,
-                l_iter_output_grids, myx_output_sample_counts, print_progress = true)
+                l_iter_output_grids, myx_output_sample_counts, n_simplex_points, 
+                print_progress = true)
 
             println("Done.")
 
@@ -269,8 +272,8 @@ module Rasterization
             start = [1, 1, t_start]
             count = [-1, -1, n_times]
 
-            for var_id ∈ 1:n_vars_3d
-                ncwrite(l_iter_output_grids[var_id], out_filename, var_names_3d[var_id], start=start, count=count)
+            for var_id ∈ 1:n_vars
+                ncwrite(l_iter_output_grids[var_id], out_filename, var_names[var_id], start=start, count=count)
             end
 
             println("Done.")
@@ -284,14 +287,14 @@ module Rasterization
         i_domain_x,         i_domain_y,     i_domain_z,
         n_samples_x,        n_samples_y,    n_samples_z,
         v_sampling_rate,    t_start,        n_times,
-        l_iteration_grids,  myx_grid_sample_counts; print_progress=false)
+        l_iteration_grids,  myx_grid_sample_counts, n_simplex_points; print_progress=false)
 
-        m43_tet_points      = Array{Float64, 2}(undef, (4, 3))
+        m43_tet_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
         tet_sample_counts   = Array{UInt8, 2}(undef, (64, 64))
         
-        l_face_points       = Array{SubArray, 1}(undef, 4)
-        l_tet_faces         = Array{TetrahedronFace, 1}(undef, 4)
+        l_face_points       = Array{SubArray, 1}(undef, n_simplex_points)
+        l_tet_faces         = Array{HesseNormalForm, 1}(undef, n_simplex_points)
 
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
@@ -309,7 +312,7 @@ module Rasterization
             end
 
             l_tetrahedron = (@view l_tetrahedra[:, tet_id])
-            for i ∈ 1:4, dim ∈ 1:3
+            for i ∈ 1:n_simplex_points, dim ∈ 1:3
                 m43_tet_points[i, dim] = l_points[dim, l_tetrahedron[i]]
             end
 
@@ -333,7 +336,7 @@ module Rasterization
      
             @inbounds idx_g_x_max =  ceil(Int32, (m32_tet_aabb[1,2] - i_domain_x[1]) / v_sampling_rate[1])
             @inbounds idx_g_y_max =  ceil(Int32, (m32_tet_aabb[2,2] - i_domain_y[1]) / v_sampling_rate[2])
-            @inbounds idx_g_z_max =  ceil(Int32, (m32_tet_aabb[3,2] - i_domain_z[1]) / v_sampling_rate[3])
+            @inbounds idx_g_z_max = floor(Int32, (m32_tet_aabb[3,2] - i_domain_z[1]) / v_sampling_rate[3]) + 1
 
             if print_progress
                 d_now = now()
@@ -348,7 +351,7 @@ module Rasterization
                     etr -= floor(mm, Dates.Millisecond)
                     ss   = floor(etr, Dates.Second)
 
-                    @printf("Working on tetrahedron %d of %d in timesteps %d-%d (%2.2f%% done). ETR: %02d:%02d:%02d\n", 
+                    @printf("Working on simplex %d of %d in timesteps %d-%d (%2.2f%% done). ETR: %02d:%02d:%02d\n",
                             n_bin_rasterized, n_bin_total,
                             t_start - 1,           # Tools like ParaView work 0-indexed. Avoid confusion by outputting 0-indexed here.
                             t_start + n_times - 2, # Tools like ParaView work 0-indexed. Avoid confusion by outputting 0-indexed here.
@@ -370,23 +373,29 @@ module Rasterization
             # For the bounding box of the current tet, reset all sample counts to 0
             @inbounds tet_sample_counts[1:n_current_cells_y, 1:n_current_cells_x] .= 0
 
-            for i ∈ 1:4
+            for i ∈ 1:n_simplex_points
                 @inbounds l_face_points[i] = @view m43_tet_points[i,:]
             end
 
             # Array{(n, d, dist_p_excl)}
-            for i ∈ 1:4
+            for i ∈ 1:n_simplex_points
                 # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
                 # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes, 
                 # it is inside the tetrahedron
                 @inbounds v_p_excl =    l_face_points[i]
-                @inbounds v_p1 =        l_face_points[(i%4)+1]
-                @inbounds v_p2 =        l_face_points[((i+1)%4)+1]
-                @inbounds v_p3 =        l_face_points[((i+2)%4)+1]
+                @inbounds v_p1 =        l_face_points[( i    % n_simplex_points) + 1]
+                @inbounds v_p2 =        l_face_points[((i+1) % n_simplex_points) + 1]
+
+                @inbounds v_p3 = 
+                    if n_simplex_points == 4; l_face_points[((i+2) % n_simplex_points) + 1]
+                    elseif n_simplex_points == 3; [v_p1[1], v_p1[2], v_p1[3] + 1.]
+                    else throw(DimensionMismatch("Only simplices with 3 or 4 points (read: triangles / tetrahedra) are supported."))
+                    end
             
                 # Calculate Hesse normal form of the plane defined by p1, p2, p3
                 # Normal vector
                 cross3!(v_p2-v_p1, v_p3-v_p1, v_n)
+                n_simplex_points == 3 && @assert (v_n[3] == 0.) "Normal vector of 2D line has non-zero z component!"
                 normalize!(v_n)
             
                 # n1x1 + n2x2 + n3x3 + d = 0; solve for d
@@ -397,10 +406,9 @@ module Rasterization
                 if dist_p_excl < 0
                     v_n = -v_n
                     d = -d
-                    dist_p_excl = -dist_p_excl
                 end
 
-                @inbounds l_tet_faces[i] = TetrahedronFace((v_n[1], v_n[2], v_n[3]), d, dist_p_excl)
+                @inbounds l_tet_faces[i] = HesseNormalForm((v_n[1], v_n[2], v_n[3]), d)
             end # for i
 
             #============================================#
@@ -420,11 +428,11 @@ module Rasterization
                     
                         accepted = true
                         # For each tetrahedron face, filter out cells that are not in the tetrahedron
-                        for i ∈ 1:4
+                        for i ∈ 1:n_simplex_points
                             @inbounds face = l_tet_faces[i]
                             # p_excl is ALWAYS on the "positive" side of the plane. 
                             # So, if p_excl and p lie on the same side, p is inside the tetrahedron
-                            dist_p = dot3(v_p, face.n) + face.d
+                            dist_p = dot3(v_p, face.n0) + face.d
                         
                             # The point lies approx. ON the face, reject in the tet on the lexicographically
                             # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
@@ -435,9 +443,9 @@ module Rasterization
                             # normal vector in contrast to its negated counterpart.
                             if (abs(dist_p) <= EDGE_TOL) 
                                 @inbounds is_positive_side = 
-                                    (v_n[1] > 0.) || 
-                                    (v_n[1] == 0. && v_n[2] > 0.) || 
-                                    (v_n[1] == 0. && v_n[2] == 0. && v_n[3] > 0.)
+                                    (face.n0[1] > 0.) || 
+                                    (face.n0[1] == 0. && face.n0[2] > 0.) || 
+                                    (face.n0[1] == 0. && face.n0[2] == 0. && face.n0[3] > 0.)
 
                                 # Reject if in tetrahedron on face's lex. negative side
                                 if !is_positive_side
@@ -481,7 +489,7 @@ module Rasterization
                 if num_samples > 0
                     idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
                     @inbounds total_samples = (myx_grid_sample_counts[idx_g_y, idx_g_x] += num_samples)
-                    for var_id ∈ 1:3
+                    for var_id ∈ 1:size(vars, 3)
                         for t ∈ 1:n_times
                             @inbounds avg = l_iteration_grids[var_id][idx_g_y, idx_g_x, t]
                             @inbounds l_iteration_grids[var_id][idx_g_y, idx_g_x, t] = avg + (vars[tet_id, t, var_id]-avg)*(num_samples/total_samples)
