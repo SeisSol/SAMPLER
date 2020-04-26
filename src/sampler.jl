@@ -16,6 +16,7 @@ using NetCDF
 using Profile
 using Printf
 using Base.Filesystem
+using Traceur
 using Pkg
 
 Pkg.precompile()
@@ -39,7 +40,7 @@ function main()
     end
 
     isfile(args["output-file"]) && rm(args["output-file"])
-    Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], var_names_3d...), var_names_3d, 
+    @trace Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], var_names_3d...), var_names_3d, 
                             triangles,  points_2d, XDMF.data_of(args["input-file-2d"], var_names_floor..., var_names_surface...), 
                             var_names_floor, var_names_surface, times_3d, sampling_rate, 
                             args["output-file"], args["memory-limit"])
