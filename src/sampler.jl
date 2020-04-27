@@ -50,10 +50,10 @@ function main()
                             times_3d, sampling_rate, filename_3d, args["memory-limit"])
 
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(args["input-file-2d"], var_names_surface...), var_names_surface, 
-                            times_2d, sampling_rate, filename_surface, args["memory-limit"])
+                            times_2d, sampling_rate, filename_surface, args["memory-limit"]; z_range=Rasterization.z_surface)
 
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(args["input-file-2d"], var_names_floor...), var_names_floor, 
-                            times_2d, sampling_rate, filename_floor, args["memory-limit"])
+                            times_2d, sampling_rate, filename_floor, args["memory-limit"]; z_range=Rasterization.z_floor)
 end
 
 main()

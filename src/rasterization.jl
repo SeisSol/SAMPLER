@@ -7,6 +7,10 @@ module Rasterization
     using Profile
     using Main.Util
 
+    export rasterize, ZRange
+
+    @enum ZRange z_all=-1 z_floor=0 z_surface=1
+
     struct HesseNormalForm
         n0              :: NTuple{3, Float64}
         d               :: Float64
@@ -23,6 +27,7 @@ module Rasterization
     end
 
     const EDGE_TOL = .0
+    const Z_RANGE_TOL = .001
 
     #=
     tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], var_names_3d...), var_names_3d, 
@@ -39,7 +44,7 @@ module Rasterization
         times               :: AbstractArray{Float64, 1}, 
         sampling_rate       :: NTuple{3, Float64}, 
         out_filename        :: AbstractString,
-        mem_limit           :: Int64) where INDEX_TYPE <: Integer
+        mem_limit           :: Int64; z_range = z_all) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -66,6 +71,20 @@ module Rasterization
         i_domain_z = (minimum(points[3,:]), maximum(points[3,:]))
 
         println("Domain is $i_domain_x × $i_domain_y × $i_domain_z.")
+
+        if z_range != z_all
+            s_z_range = nothing
+
+            if z_range == z_floor
+                i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[1] + Z_RANGE_TOL)
+                s_region = "floor"
+            else # if z == z_surface
+                i_domain_z = (i_domain_z[2] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
+                s_region = "surface"
+            end
+
+            println("Only processing triangles on the ", s_region, ".")
+        end
 
         n_samples_x = ceil(Int, (i_domain_x[end] - i_domain_x[1]) / sampling_rate[1])
         n_samples_y = ceil(Int, (i_domain_y[end] - i_domain_y[1]) / sampling_rate[2])
@@ -118,6 +137,17 @@ module Rasterization
                     m43_tet_points[i, dim] = points[dim, tetrahedron[i]]
                 end
 
+                # Simplex is not in the z-domain (only possible if z_range ∈ [z_floor, z_surface]), ignore it.
+                if z_range != z_all
+                    coord_z_min = minimum(m43_tet_points[:, 3])
+                    coord_z_max = maximum(m43_tet_points[:, 3])
+
+                    if coord_z_min > i_domain_z[2] || coord_z_max < i_domain_z[1]
+                        l_bin_ids[tet_id] = n_threads * 2 + 1 # Unused bin, will be ignored later
+                        continue
+                    end
+                end
+
                 coord_x_min = minimum(m43_tet_points[:, 1])
                 coord_x_max = maximum(m43_tet_points[:, 1])
 
@@ -138,17 +168,21 @@ module Rasterization
                 else
                     l_bin_ids[tet_id] = 2*n_threads
                 end
-            end
-        end
+            end # for tet_id
+        end # for thread_id
 
         # The number of tetrahedra in each respective bin
-        l_bin_counts = zeros(INDEX_TYPE, 2*n_threads)
+        l_bin_counts = zeros(INDEX_TYPE, 2*n_threads + 1)
         for bin_id ∈ l_bin_ids
             l_bin_counts[bin_id] += 1
         end
 
-        for bin_id ∈ 1:length(l_bin_counts)
+        for bin_id ∈ 1:length(l_bin_counts) - 1
             println(l_bin_counts[bin_id], " ", s_simplex_name_plural, " in bin ", bin_id)
+        end
+
+        if z_range != z_all
+            println(l_bin_counts[length(l_bin_counts)], " ", s_simplex_name_plural, " are ignored due to z_range filter.")
         end
 
         println("Done.")
