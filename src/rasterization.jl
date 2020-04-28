@@ -243,7 +243,7 @@ module Rasterization
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
             for grid in l_iter_output_grids
-                grid[1:n_times,:,:] .= 0
+                grid[:,:, 1:n_times] .= 0
             end
 
             #============================================#
