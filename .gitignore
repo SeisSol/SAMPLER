@@ -1,5 +1,6 @@
 .vscode
 *.mem
+*.perf
 *.nc
 *.pvsm
 profile.txt

@@ -114,18 +114,18 @@ module Args
                                 \t Examples: 8G; 2T; 512M\n
                                 \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
                 default = "8G"
-            "--vars-3d", "-v"
-                help = """The variables from the 3D SeisSol output that the script shall process. \n
-                                \t Examples: uvw; u; uv"""
-                default = "uvw"
-            "--vars-surface", "-s"
-                help = """The variables from the 2D SeisSol output that the script shall process on the ocean surface. \n
-                                \t Examples: W; UVW"""
-                default = "W"
-            "--vars-floor", "-f"
-                help = """The variables from the 2D SeisSol output that the script shall process on the ocean floor. \n
-                                \t Examples: W; UVW"""
-                default = "UVW"
+            #"--vars-3d", "-v"
+            #    help = """The variables from the 3D SeisSol output that the script shall process. \n
+            #                    \t Examples: uvw; u; uv"""
+            #    default = "uv"
+            #"--vars-surface", "-s"
+            #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean surface. \n
+            #                    \t Examples: W"""
+            #    default = "W"
+            #"--vars-floor", "-f"
+            #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean floor. \n
+            #                    \t Examples: W; UVW"""
+            #    default = "W"
             "input-file-3d"
                 help = "The SeisSol 3D output in XDMF format. Use the output file without the _surface suffix."
                 required = true
@@ -143,9 +143,9 @@ module Args
     function validate_args!(args::Dict)
         # TODO
         args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
-        args["vars-3d"]      = [x for x ∈ split(args["vars-3d"],      "") if x != ""]
-        args["vars-surface"] = [x for x ∈ split(args["vars-surface"], "") if x != ""]
-        args["vars-floor"]   = [x for x ∈ split(args["vars-floor"],   "") if x != ""]
+        #args["vars-3d"]      = [x for x ∈ split(args["vars-3d"],      "") if x != ""]
+        #args["vars-surface"] = [x for x ∈ split(args["vars-surface"], "") if x != ""]
+        #args["vars-floor"]   = [x for x ∈ split(args["vars-floor"],   "") if x != ""]
         return args
     end
 end

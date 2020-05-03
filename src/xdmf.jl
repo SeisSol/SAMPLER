@@ -10,16 +10,20 @@ module XDMF
         timesteps   :: Array{XMLDict.XMLDictElement,1}
     end
 
+    function timesteps_of(file_path::AbstractString)
+        xdmf = XDMFFile(file_path)
+        return map(data_item -> parse(Float64, data_item["Time"][:Value]), xdmf.timesteps)
+    end
+
     function grid_of(file_path::AbstractString)
         xdmf = XDMFFile(file_path)
 
         # Memory-map geometry (points) and topology (simplices (triangles/tetrahedra)) files.
         # Since the ids of the points referred to in topo_item start at 0 (and Julia counts from 1) we have to add 1.
         simplices = mmap_data_item(xdmf.timesteps[1]["Topology"]["DataItem"], xdmf.base_path) .+ 1
-        points     = mmap_data_item(xdmf.timesteps[1]["Geometry"]["DataItem"], xdmf.base_path)
-        times = map(data_item -> parse(Float64, data_item["Time"][:Value]), xdmf.timesteps)
+        points    = mmap_data_item(xdmf.timesteps[1]["Geometry"]["DataItem"], xdmf.base_path)
 
-        return (simplices, points, times)
+        return (simplices, points)
     end
 
     function data_of(file_path::AbstractString, var_names...)

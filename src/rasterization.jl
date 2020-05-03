@@ -16,18 +16,18 @@ module Rasterization
         d               :: Float64
     end
 
-    mutable struct ThreadContext
-        tet_points      :: Array{Float64, 2}
-        tet_aabb        :: Array{Float64, 2}
-        tet_dict        :: Array{Int32, 2}
-        p               :: Array{Float64, 1}
-        face_points     :: Array{SubArray, 1}
-        n               :: Array{Float64, 1}
-        tet_faces       :: Array{HesseNormalForm, 1}
-    end
-
     const EDGE_TOL = .0
     const Z_RANGE_TOL = .001
+
+    const VAR_U = (id=1, name="u")
+    const VAR_V = (id=2, name="v")
+
+    const VAR_OUT_B = (id=1, name="b")
+    const VAR_OUT_D = (id=1, name="d")
+
+    const VAR_OUT_η = (id=1, name="h")
+
+    const VAR_IN_W = 1
 
     #=
     tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], var_names_3d...), var_names_3d, 
@@ -39,12 +39,12 @@ module Rasterization
     function rasterize(
         simplices           :: AbstractArray{INDEX_TYPE, 2}, 
         points              :: AbstractArray{Float64, 2},
-        vars                :: AbstractArray{A where A <: AbstractArray, 2},
-        var_names           :: AbstractArray,
+        in_vars             :: AbstractArray{A where A <: AbstractArray, 2},
+        in_var_names        :: AbstractArray,
         times               :: AbstractArray{Float64, 1}, 
         sampling_rate       :: NTuple{3, Float64}, 
         out_filename        :: AbstractString,
-        mem_limit           :: Int64; z_range = z_all) where INDEX_TYPE <: Integer
+        mem_limit           :: Int64; z_range = z_all, t_start = -Inf64, t_end = Inf64, create_file=false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -54,6 +54,7 @@ module Rasterization
         # to indicate their type or unit:
         #   i_  : Interval / Pair / 2-Tuple
         #   n_  : Count / Number of Objects
+        #   o_  : Array offset
         #   b_  : Size in Bytes
         #   l_  : 1D-Array / List
         #   d_  : Date & Time
@@ -76,14 +77,14 @@ module Rasterization
             s_z_range = nothing
 
             if z_range == z_floor
-                i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[1] + Z_RANGE_TOL)
+                i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] - Z_RANGE_TOL)
                 s_region = "floor"
             else # if z == z_surface
                 i_domain_z = (i_domain_z[2] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
                 s_region = "surface"
             end
 
-            println("Only processing triangles on the ", s_region, ".")
+            println("Only processing triangles on the ", s_region, " (z-domain limited to ", i_domain_z, ").")
         end
 
         n_samples_x = ceil(Int, (i_domain_x[end] - i_domain_x[1]) / sampling_rate[1])
@@ -101,8 +102,20 @@ module Rasterization
         b_mem_per_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
         b_mem_static                = sizeof(UInt16)  * n_samples_x * n_samples_y + 1024^2*n_threads
 
-        n_vars                      = length(var_names)
-        n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_vars * b_mem_per_var_and_timestep)
+        n_in_vars                   = length(in_var_names)
+
+        # u, v for 3d; η for surface; b (static!) and d for seafloor
+        out_vars_dyn = 
+            if     z_range == z_all;     [VAR_U, VAR_V]
+            elseif z_range == z_surface; [VAR_OUT_η]
+            else                         [VAR_OUT_D] end
+
+        out_vars_stat = if z_range == z_floor; [VAR_OUT_B] else [] end
+
+        n_out_vars_dyn              = length(out_vars_dyn)
+        n_out_vars_stat             = length(out_vars_stat)
+
+        n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_in_vars * b_mem_per_var_and_timestep)
         n_iterations                = ceil(Int, length(times) / n_timesteps_per_iteration)
         
         n_simplex_points            = size(simplices, 1)
@@ -151,8 +164,8 @@ module Rasterization
                 coord_x_min = minimum(m43_tet_points[:, 1])
                 coord_x_max = maximum(m43_tet_points[:, 1])
 
-                @inbounds idx_x_min = floor(Int,(coord_x_min - i_domain_x[1]) / sampling_rate[1]) + 1
-                @inbounds idx_x_max =  ceil(Int,(coord_x_max - i_domain_x[1]) / sampling_rate[1])
+                #=@inbounds=# idx_x_min = floor(Int,(coord_x_min - i_domain_x[1]) / sampling_rate[1]) + 1
+                #=@inbounds=# idx_x_max =  ceil(Int,(coord_x_max - i_domain_x[1]) / sampling_rate[1])
 
                 bin_id_l = floor(UInt8, idx_x_min / n_samples_x * n_threads) + 1
                 bin_id_r =  ceil(UInt8, idx_x_max / n_samples_x * n_threads)
@@ -191,20 +204,26 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        nccreate(out_filename, var_names[1], 
-                 "y", [i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y], 
-                 "x", [i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x], 
-                 "time", times, Dict("units"=>"seconds"))
-
-        for var_id ∈ 2:n_vars
-            nccreate(out_filename, var_names[var_id], 
-                     "y", "x", "time")
-        end
+        nc :: NcFile = 
+            if create_file 
+                Main.Util.get_or_create_netcdf(out_filename; create=true,
+                                               x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+                                               y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+                                               t_vals=times)
+            else
+                Main.Util.get_or_create_netcdf(out_filename)
+            end
 
         # These are the grids that will be written to the NetCDF output later on.
-        l_iter_output_grids = Array{Array{Float64, 3}, 1}(undef, n_vars)
-        for var_id ∈ 1:n_vars
-            l_iter_output_grids[var_id] = Array{Float64, 3}(undef, (n_samples_y, n_samples_x, n_timesteps_per_iteration))
+        l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
+        for var ∈ out_vars_dyn
+            println(var.name)
+            l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_y, n_samples_x, n_timesteps_per_iteration))
+        end
+
+        l_stat_output_grids = Array{Array{Float64, 2}, 1}(undef, n_out_vars_stat)
+        for var ∈ out_vars_stat
+            l_stat_output_grids[var.id] = Array{Float64, 2}(undef, (n_samples_y, n_samples_x))
         end
 
         # This matrix counts the total number of samples in each output grid cell
@@ -233,17 +252,24 @@ module Rasterization
             # and D R A S T I C A L L Y improves runtime.
             #============================================#
 
-            prefetched_vars = Array{Float64, 3}(undef, (n_simplices, n_times, n_vars))
+            prefetched_vars = Array{Float64, 3}(undef, (n_simplices, n_times, n_in_vars))
             @profile begin
-                for var_id ∈ 1:n_vars, time ∈ t_start:t_start + n_times - 1
+                for var_id ∈ 1:n_in_vars, time ∈ t_start:t_start + n_times - 1
                     dest_offset = (var_id-1)*n_times*n_simplices + (time-t_start)*n_simplices + 1
-                    copyto!(prefetched_vars, dest_offset, vars[time, var_id], 1, n_simplices)
+                    copyto!(prefetched_vars, dest_offset, in_vars[time, var_id], 1, n_simplices)
                 end
             end # profile
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
-            for grid in l_iter_output_grids
+            for grid ∈ l_dyn_output_grids
                 grid[:,:, 1:n_times] .= 0
+            end
+
+            # Static vars only need to be read once. Do that in the first iteration.
+            if iteration == 1
+                for grid ∈ l_stat_output_grids
+                    grid .= 0
+                end
             end
 
             #============================================#
@@ -261,12 +287,13 @@ module Rasterization
 
             Threads.@threads for thread_id ∈ 1:n_threads
                 iterate_tets!(
-                    thread_id,         l_bin_ids,   l_bin_counts,
-                    n_simplices,       simplices,   points, prefetched_vars,
-                    i_domain_x,        i_domain_y,  i_domain_z,
-                    n_samples_x,       n_samples_y, n_samples_z,
-                    sampling_rate,     t_start,     n_times,
-                    l_iter_output_grids, myx_output_sample_counts, n_simplex_points,
+                    thread_id,         l_bin_ids,    l_bin_counts,
+                    n_simplices,       simplices,    points, 
+                    prefetched_vars,   out_vars_dyn, out_vars_stat,
+                    i_domain_x,        i_domain_y,   i_domain_z,
+                    n_samples_x,       n_samples_y,  n_samples_z,
+                    sampling_rate,     t_start,      n_times,
+                    l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
                     print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
@@ -276,23 +303,25 @@ module Rasterization
             # with the normal bins without conflict
             Threads.@threads for thread_id ∈ 1:n_threads-1
                 iterate_tets!(
-                    n_threads + thread_id, l_bin_ids,   l_bin_counts,
-                    n_simplices,           simplices,   points, prefetched_vars,
-                    i_domain_x,            i_domain_y,  i_domain_z,
-                    n_samples_x,           n_samples_y, n_samples_z,
-                    sampling_rate,         t_start,     n_times,
-                    l_iter_output_grids,     myx_output_sample_counts, n_simplex_points, 
+                    n_threads + thread_id, l_bin_ids,    l_bin_counts,
+                    n_simplices,           simplices,    points, 
+                    prefetched_vars,       out_vars_dyn, out_vars_stat,
+                    i_domain_x,            i_domain_y,   i_domain_z,
+                    n_samples_x,           n_samples_y,  n_samples_z,
+                    sampling_rate,         t_start,      n_times,
+                    l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
                     print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             # Lastly, the tets that overlapped multiple bins (practically never occurs!)
             iterate_tets!(
-                2 * n_threads,     l_bin_ids,   l_bin_counts,
-                n_simplices,       simplices,   points, prefetched_vars,
-                i_domain_x,        i_domain_y,  i_domain_z,
-                n_samples_x,       n_samples_y, n_samples_z,
-                sampling_rate,     t_start,     n_times,
-                l_iter_output_grids, myx_output_sample_counts, n_simplex_points, 
+                2 * n_threads,     l_bin_ids,    l_bin_counts,
+                n_simplices,       simplices,    points, 
+                prefetched_vars,   out_vars_dyn, out_vars_stat,
+                i_domain_x,        i_domain_y,   i_domain_z,
+                n_samples_x,       n_samples_y,  n_samples_z,
+                sampling_rate,     t_start,      n_times,
+                l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
                 print_progress = true)
 
             println("Done.")
@@ -306,8 +335,14 @@ module Rasterization
             start = [1, 1, t_start]
             count = [-1, -1, n_times]
 
-            for var_id ∈ 1:n_vars
-                ncwrite(l_iter_output_grids[var_id], out_filename, var_names[var_id], start=start, count=count)
+            for var ∈ out_vars_dyn
+                ncwrite(l_dyn_output_grids[var.id], out_filename, var.name, start=start, count=count)
+            end
+
+            if iteration == 1
+                for var ∈ out_vars_stat
+                    ncwrite(l_stat_output_grids[var.id], out_filename, var.name, start=[1, 1], count=[-1, -1])
+                end
             end
 
             println("Done.")
@@ -316,23 +351,24 @@ module Rasterization
     end # function rasterize
 
     function iterate_tets!(
-        bin_id,             l_bin_ids,      l_bin_counts, 
-        n_tetrahedra,       l_tetrahedra,   l_points, vars, 
-        i_domain_x,         i_domain_y,     i_domain_z,
-        n_samples_x,        n_samples_y,    n_samples_z,
-        v_sampling_rate,    t_start,        n_times,
-        l_iteration_grids,  myx_grid_sample_counts, n_simplex_points; print_progress=false)
+        bin_id,           l_bin_ids,    l_bin_counts, 
+        n_tetrahedra,     l_tetrahedra, l_points, 
+        in_vars,          out_vars_dyn, out_vars_stat,
+        i_domain_x,       i_domain_y,   i_domain_z,
+        n_samples_x,      n_samples_y,  n_samples_z,
+        v_sampling_rate,  t_start,      n_times,
+        l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
+        n_simplex_points, z_range;      print_progress=false)
 
         m43_tet_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
-        tet_sample_counts   = Array{UInt8, 2}(undef, (64, 64))
-        
         l_face_points       = Array{SubArray, 1}(undef, n_simplex_points)
         l_tet_faces         = Array{HesseNormalForm, 1}(undef, n_simplex_points)
-
+        
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
-
+        tet_sample_counts   = Array{UInt8, 2}(undef, (64, 64))
+        
         d_start             = now()
         d_last_printed      = d_start
         print_interval      = Second(2)
@@ -344,33 +380,6 @@ module Rasterization
             if l_bin_ids[tet_id] != bin_id
                 continue
             end
-
-            l_tetrahedron = (@view l_tetrahedra[:, tet_id])
-            for i ∈ 1:n_simplex_points, dim ∈ 1:3
-                m43_tet_points[i, dim] = l_points[dim, l_tetrahedron[i]]
-            end
-
-            for dim ∈ 1:3
-                m32_tet_aabb[dim, 1] = minimum(m43_tet_points[:, dim])
-                m32_tet_aabb[dim, 2] = maximum(m43_tet_points[:, dim])
-            end
-
-            #============================================#
-            # A note on global & local indices
-            #============================================#
-            # In the following, idx_g_ will refer to an
-            # index of the global sampling domain while
-            # idx_l_ refers to an index in the tet-local
-            # domain.
-            #============================================#
-
-            @inbounds idx_g_x_min = floor(Int32, (m32_tet_aabb[1,1] - i_domain_x[1]) / v_sampling_rate[1]) + 1
-            @inbounds idx_g_y_min = floor(Int32, (m32_tet_aabb[2,1] - i_domain_y[1]) / v_sampling_rate[2]) + 1
-            @inbounds idx_g_z_min = floor(Int32, (m32_tet_aabb[3,1] - i_domain_z[1]) / v_sampling_rate[3]) + 1
-     
-            @inbounds idx_g_x_max =  ceil(Int32, (m32_tet_aabb[1,2] - i_domain_x[1]) / v_sampling_rate[1])
-            @inbounds idx_g_y_max =  ceil(Int32, (m32_tet_aabb[2,2] - i_domain_y[1]) / v_sampling_rate[2])
-            @inbounds idx_g_z_max = floor(Int32, (m32_tet_aabb[3,2] - i_domain_z[1]) / v_sampling_rate[3]) + 1
 
             if print_progress
                 d_now = now()
@@ -392,7 +401,34 @@ module Rasterization
                             n_bin_rasterized/n_bin_total*100,
                             hh.value, mm.value, ss.value)
                 end
-            end # if thread_id
+            end # if print_progress
+
+            l_tetrahedron = (@view l_tetrahedra[:, tet_id])
+            for i ∈ 1:n_simplex_points, dim ∈ 1:3
+                m43_tet_points[i, dim] = l_points[dim, l_tetrahedron[i]]
+            end
+
+            for dim ∈ 1:3
+                m32_tet_aabb[dim, 1] = minimum(m43_tet_points[:, dim])
+                m32_tet_aabb[dim, 2] = maximum(m43_tet_points[:, dim])
+            end
+
+            #============================================#
+            # A note on global & local indices
+            #============================================#
+            # In the following, idx_g_ will refer to an
+            # index of the global sampling domain while
+            # idx_l_ refers to an index in the tet-local
+            # domain.
+            #============================================#
+
+            #=@inbounds=# idx_g_x_min = floor(Int32, (m32_tet_aabb[1,1] - i_domain_x[1]) / v_sampling_rate[1]) + 1
+            #=@inbounds=# idx_g_y_min = floor(Int32, (m32_tet_aabb[2,1] - i_domain_y[1]) / v_sampling_rate[2]) + 1
+            #=@inbounds=# idx_g_z_min = floor(Int32, (m32_tet_aabb[3,1] - i_domain_z[1]) / v_sampling_rate[3]) + 1
+     
+            #=@inbounds=# idx_g_x_max =  ceil(Int32, (m32_tet_aabb[1,2] - i_domain_x[1]) / v_sampling_rate[1])
+            #=@inbounds=# idx_g_y_max =  ceil(Int32, (m32_tet_aabb[2,2] - i_domain_y[1]) / v_sampling_rate[2])
+            #=@inbounds=# idx_g_z_max = floor(Int32, (m32_tet_aabb[3,2] - i_domain_z[1]) / v_sampling_rate[3]) + 1
 
             n_current_cells_x = idx_g_x_max - idx_g_x_min + 1
             n_current_cells_y = idx_g_y_max - idx_g_y_min + 1
@@ -405,22 +441,21 @@ module Rasterization
             end
 
             # For the bounding box of the current tet, reset all sample counts to 0
-            @inbounds tet_sample_counts[1:n_current_cells_y, 1:n_current_cells_x] .= 0
+            #=@inbounds=# tet_sample_counts[1:n_current_cells_y, 1:n_current_cells_x] .= 0
 
             for i ∈ 1:n_simplex_points
-                @inbounds l_face_points[i] = @view m43_tet_points[i,:]
+                #=@inbounds=# l_face_points[i] = @view m43_tet_points[i,:]
             end
 
-            # Array{(n, d, dist_p_excl)}
             for i ∈ 1:n_simplex_points
                 # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
                 # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes, 
                 # it is inside the tetrahedron
-                @inbounds v_p_excl =    l_face_points[i]
-                @inbounds v_p1 =        l_face_points[( i    % n_simplex_points) + 1]
-                @inbounds v_p2 =        l_face_points[((i+1) % n_simplex_points) + 1]
+                #=@inbounds=# v_p_excl = l_face_points[i]
+                #=@inbounds=# v_p1 =     l_face_points[( i    % n_simplex_points) + 1]
+                #=@inbounds=# v_p2 =     l_face_points[((i+1) % n_simplex_points) + 1]
 
-                @inbounds v_p3 = 
+                #=@inbounds=# v_p3 = 
                     if n_simplex_points == 4; l_face_points[((i+2) % n_simplex_points) + 1]
                     elseif n_simplex_points == 3; [v_p1[1], v_p1[2], v_p1[3] + 1.]
                     else throw(DimensionMismatch("Only simplices with 3 or 4 points (read: triangles / tetrahedra) are supported."))
@@ -442,8 +477,49 @@ module Rasterization
                     d = -d
                 end
 
-                @inbounds l_tet_faces[i] = HesseNormalForm((v_n[1], v_n[2], v_n[3]), d)
+                #=@inbounds=# l_tet_faces[i] = HesseNormalForm((v_n[1], v_n[2], v_n[3]), d)
             end # for i
+
+            @inline function is_in_simplex()
+                accepted = true
+                # For each tetrahedron face, filter out cells that are not in the tetrahedron
+                for i ∈ 1:n_simplex_points
+                    #=@inbounds=# face = l_tet_faces[i]
+                    # p_excl is ALWAYS on the "positive" side of the plane. 
+                    # So, if p_excl and p lie on the same side, p is inside the tetrahedron
+                    dist_p = dot3(v_p, face.n0) + face.d
+                
+                    # The point lies approx. ON the face, reject in the tet on the lexicographically
+                    # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
+                    # only accepted for one of them.
+                    # Def.: lexicographical order: 
+                    #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
+                    # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
+                    # normal vector in contrast to its negated counterpart.
+                    if (abs(dist_p) <= EDGE_TOL) 
+                        #=@inbounds=# is_positive_side = 
+                            (face.n0[1] > 0.) || 
+                            (face.n0[1] == 0. && face.n0[2] > 0.) || 
+                            (face.n0[1] == 0. && face.n0[2] == 0. && face.n0[3] > 0.)
+                    
+                        # Reject if in tetrahedron on face's lex. negative side
+                        if !is_positive_side
+                            accepted = false
+                            break
+                        end
+                    end
+                
+                    # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
+                    # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
+                    # Therefore, we only need to check if dist_p is negative to reject p.
+                    if dist_p < EDGE_TOL
+                        accepted = false
+                        break
+                    end
+                end # for i
+
+                return accepted
+            end
 
             #============================================#
             # Sample each cuboid that is overlapping the 
@@ -454,55 +530,49 @@ module Rasterization
             #============================================#
 
             for idx_g_x ∈ idx_g_x_min:idx_g_x_max
-                @inbounds v_p[1] = (idx_g_x-1)*v_sampling_rate[1] + i_domain_x[1]
+                #=@inbounds=# v_p[1] = (idx_g_x-1)*v_sampling_rate[1] + i_domain_x[1]
                 for idx_g_y ∈ idx_g_y_min:idx_g_y_max
-                    @inbounds v_p[2] = (idx_g_y-1)*v_sampling_rate[2] + i_domain_y[1]
-                    for idx_g_z ∈ idx_g_z_min:idx_g_z_max
-                        @inbounds v_p[3] = (idx_g_z-1)*v_sampling_rate[3] + i_domain_z[1]
-                    
-                        accepted = true
-                        # For each tetrahedron face, filter out cells that are not in the tetrahedron
-                        for i ∈ 1:n_simplex_points
-                            @inbounds face = l_tet_faces[i]
-                            # p_excl is ALWAYS on the "positive" side of the plane. 
-                            # So, if p_excl and p lie on the same side, p is inside the tetrahedron
-                            dist_p = dot3(v_p, face.n0) + face.d
-                        
-                            # The point lies approx. ON the face, reject in the tet on the lexicographically
-                            # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
-                            # only accepted for one of them.
-                            # Def.: lexicographical order: 
-                            #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
-                            # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
-                            # normal vector in contrast to its negated counterpart.
-                            if (abs(dist_p) <= EDGE_TOL) 
-                                @inbounds is_positive_side = 
-                                    (face.n0[1] > 0.) || 
-                                    (face.n0[1] == 0. && face.n0[2] > 0.) || 
-                                    (face.n0[1] == 0. && face.n0[2] == 0. && face.n0[3] > 0.)
+                    #=@inbounds=# v_p[2] = (idx_g_y-1)*v_sampling_rate[2] + i_domain_y[1]
 
-                                # Reject if in tetrahedron on face's lex. negative side
-                                if !is_positive_side
-                                    accepted = false
-                                    break
-                                end
+                    if n_simplex_points == 4 # processing tets
+                        for idx_g_z ∈ idx_g_z_min:idx_g_z_max
+                            #=@inbounds=# v_p[3] = (idx_g_z-1)*v_sampling_rate[3] + i_domain_z[1]
+                            if is_in_simplex() # accept cell and increment its 2D cell counter for the current tetrahedron by 1
+                                idx_l_x = idx_g_x - idx_g_x_min + 1
+                                idx_l_y = idx_g_y - idx_g_y_min + 1
+                                #=@inbounds=# tet_sample_counts[idx_l_y, idx_l_x] += 1
                             end
-
-                            # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
-                            # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
-                            # Therefore, we only need to check if dist_p is negative to reject p.
-                            if dist_p < EDGE_TOL
-                                accepted = false
-                                break
-                            end
-                        end # for i
-
-                        if accepted # accept cell and increment its 2D cell counter for the current tetrahedron by 1
+                        end # for z
+                    else # processing triangles
+                        if is_in_simplex()
                             idx_l_x = idx_g_x - idx_g_x_min + 1
                             idx_l_y = idx_g_y - idx_g_y_min + 1
-                            @inbounds tet_sample_counts[idx_l_y, idx_l_x] += 1
+
+                            if z_range == z_floor
+                                # Only calculate bathymetry height in the first timestep since it is static
+                                if t_start == 1
+                                    v_λ = bary_coords_2d(v_p, m43_tet_points)
+
+                                    # Calculate bathymetry height from triangle's z-coords and interpolate between them
+                                    b = sum(m43_tet_points[1:3,3] .* v_λ) / 3.
+                                    l_stat_grids[VAR_OUT_B.id][idx_g_y, idx_g_x] = b
+                                end
+
+                                for t ∈ 1:n_times
+                                    l_dyn_grids[VAR_OUT_D.id][idx_g_y, idx_g_x, t] = in_vars[tet_id, t, VAR_IN_W]
+                                end
+                            elseif z_range == z_surface
+                                for t ∈ 1:n_times
+                                    η = in_vars[tet_id, t, VAR_IN_W]
+                                    l_dyn_grids[VAR_OUT_η.id][idx_g_y, idx_g_x, t] = η
+                                end
+                            else # Processing triangles but neither on floor nor on surface. No use for that at the moment
+                                throw(ErrorException("Not implemented."))
+                            end
+
+                            tet_sample_counts[idx_l_y, idx_l_x] = 1 # 2D surface is only sampled once in z-direction
                         end
-                    end # for z
+                    end
                 end # for y
             end # for x
 
@@ -518,31 +588,52 @@ module Rasterization
             # number of samples in the cell.
             #============================================#
 
-            for idx_l_x ∈ 1:n_current_cells_x, idx_l_y ∈ 1:n_current_cells_y
-                @inbounds num_samples = tet_sample_counts[idx_l_y, idx_l_x]
-                if num_samples > 0
-                    idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
-                    @inbounds total_samples = (myx_grid_sample_counts[idx_g_y, idx_g_x] += num_samples)
-                    for var_id ∈ 1:size(vars, 3)
-                        for t ∈ 1:n_times
-                            @inbounds avg = l_iteration_grids[var_id][idx_g_y, idx_g_x, t]
-                            @inbounds l_iteration_grids[var_id][idx_g_y, idx_g_x, t] = avg + (vars[tet_id, t, var_id]-avg)*(num_samples/total_samples)
+            if z_range == z_all # Build running average of u, v
+                for idx_l_x ∈ 1:n_current_cells_x, idx_l_y ∈ 1:n_current_cells_y
+                    #=@inbounds=# num_samples = tet_sample_counts[idx_l_y, idx_l_x]
+                    if num_samples > 0
+                        idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
+                        #=@inbounds=# total_samples = (myx_grid_sample_counts[idx_g_y, idx_g_x] += num_samples)
+                        for var ∈ out_vars_dyn
+                            for t ∈ 1:n_times
+                                #=@inbounds=# avg = l_dyn_grids[var.id][idx_g_y, idx_g_x, t]
+                                #=@inbounds=# l_dyn_grids[var.id][idx_g_y, idx_g_x, t] = avg + (in_vars[tet_id, t, var.id]-avg)*(num_samples/total_samples)
+                            end
                         end
                     end
                 end
-            end
+            end # if z_range
 
             n_bin_rasterized += 1
         end # for tet_id
     end
 
     @inline function cross3!(a, b, ret)
-        @inbounds ret[1] = (a[2]*b[3] - a[3]*b[2])
-        @inbounds ret[2] = (a[3]*b[1] - a[1]*b[3])
-        @inbounds ret[3] = (a[1]*b[2] - a[2]*b[1])
+        #=@inbounds=# ret[1] = (a[2]*b[3] - a[3]*b[2])
+        #=@inbounds=# ret[2] = (a[3]*b[1] - a[1]*b[3])
+        #=@inbounds=# ret[3] = (a[1]*b[2] - a[2]*b[1])
     end
 
     @inline function dot3(a, b)
-        @inbounds return a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+        #=@inbounds=# return a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+    end
+
+    @inline function bary_coords_2d(p :: Array{Float64, 1}, ps :: Array{Float64, 2}) :: NTuple{3, Float64}
+        @assert length(p) >= 2
+        @assert size(ps, 1) >= 3
+        @assert size(ps, 2) >= 2
+
+        #=@inbounds=# T11 = ps[1, 1] - ps[3, 1]
+        #=@inbounds=# T12 = ps[2, 1] - ps[3, 1]
+        #=@inbounds=# T21 = ps[1, 2] - ps[3, 2]
+        #=@inbounds=# T22 = ps[2, 2] - ps[3, 2]
+
+        det = T11 * T22 - T12 * T21
+
+        #=@inbounds=# λ1 = (T22*(p[1]-ps[3,1]) - T12*(p[2]-ps[3,2])) / det
+        #=@inbounds=# λ2 = (T11*(p[2]-ps[3,2]) - T21*(p[1]-ps[3,1])) / det
+        λ3 = 1. - λ1 - λ2
+
+        return (λ1, λ2, λ3)
     end
 end # module Rasterization
