@@ -3,6 +3,8 @@ module Kajiura
     using Base.Threads
     using Printf
 
+    export apply_kajiura!, precalculate_σ
+
     const G = begin
         #              ∞     (-1)^n * (2n + 1)
         # G(r) ≈ 1/π * Σ ——————————————————————————
@@ -81,8 +83,8 @@ module Kajiura
         return extrapolate(scale(itp, l_h), Flat())
     end
 
-    function apply(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 2}, η::AbstractArray{Float64, 2}, 
-                   h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; n_h :: Float64 = 5., 
+    function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 2}, η::AbstractArray{Float64, 2}, 
+                   h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64, water_level :: Float64; n_h :: Float64 = 5., 
                    σ = precalculate_σ(h_min, h_max, Δx, Δy; n_h=n_h))
         
         ny, nx = size(b)
@@ -106,7 +108,7 @@ module Kajiura
                     continue
                 end
 
-                h_ij = -b[j, i]
+                h_ij = water_level-b[j, i]
                 σ_ij = σ(h_ij)
                 mmn_quantities[j, i] = (Δx * Δy / h_ij^2 * σ_ij * D_ij, h_ij)
 

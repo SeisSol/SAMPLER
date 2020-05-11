@@ -8,6 +8,7 @@ main:
 include("util.jl")
 include("args.jl")
 include("xdmf.jl")
+include("kajiura.jl")
 include("rasterization.jl")
 
 using Base.Threads
@@ -24,6 +25,11 @@ function main()
     
     sampling_rate = ARGS["sampling-rate"]
     has_3d = !isempty(ARGS["input-file-3d"])
+    has_kajiura = ARGS["kajiura"]
+
+    if has_3d && has_kajiura
+        throw(ArgumentError("Cannot process 3D input file when Kajiura filter is active!"))
+    end
 
     #============================================#
     # Compare timesteps of 2D and 3D files.
@@ -56,7 +62,7 @@ function main()
 
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                             times, sampling_rate, out_filename, ARGS["memory-limit"]; 
-                            z_range=Rasterization.z_floor, create_file=true, kajiura=ARGS["kajiura"])
+                            z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura)
 
     GC.gc(true)
 
@@ -64,9 +70,11 @@ function main()
     # Process 2D sea surface
     #============================================#
 
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
-                            times, sampling_rate, out_filename, ARGS["memory-limit"]; 
-                            z_range=Rasterization.z_surface)
+    if !has_kajiura
+        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+                                times, sampling_rate, out_filename, ARGS["memory-limit"]; 
+                                z_range=Rasterization.z_surface)
+    end
 
 
     triangles = nothing

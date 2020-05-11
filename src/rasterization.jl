@@ -6,6 +6,7 @@ module Rasterization
     using NetCDF
     using Profile
     using Main.Util
+    using Main.Kajiura
 
     export rasterize, ZRange
 
@@ -19,16 +20,6 @@ module Rasterization
     const EDGE_TOL = .0
     const Z_RANGE_TOL = .001
 
-    const VAR_U = (id=1, name="u")
-    const VAR_V = (id=2, name="v")
-
-    const VAR_OUT_B = (id=1, name="b")
-    const VAR_OUT_D = (id=1, name="d")
-
-    const VAR_OUT_η = (id=1, name="h")
-
-    const VAR_IN_W = 1
-
     function rasterize(
         simplices           :: AbstractArray{INDEX_TYPE, 2}, 
         points              :: AbstractArray{Float64, 2},
@@ -37,7 +28,8 @@ module Rasterization
         times               :: AbstractArray{Float64, 1}, 
         sampling_rate       :: NTuple{3, Float64}, 
         out_filename        :: AbstractString,
-        mem_limit           :: Int64; z_range = z_all, t_start = -Inf64, t_end = Inf64, create_file=false) where INDEX_TYPE <: Integer
+        mem_limit           :: Int64; 
+        z_range = z_all, t_start = -Inf64, t_end = Inf64, create_file=false, kajiura=false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -60,6 +52,10 @@ module Rasterization
         #============================================#
         # Gather domain information
         #============================================#
+
+        if kajiura && z_range != z_floor
+            throw(ArgumentError("Invalid z-range specified: Kajiura filter can only process seafloor displacements!"))
+        end
 
         i_domain_x = (minimum(points[1,:]), maximum(points[1,:]))
         i_domain_y = (minimum(points[2,:]), maximum(points[2,:]))
@@ -100,12 +96,13 @@ module Rasterization
 
         # u, v for 3d; η for surface; d for seafloor
         out_vars_dyn = 
-            if     z_range == z_all;     [VAR_U, VAR_V]
-            elseif z_range == z_surface; [VAR_OUT_η]
-            else                         [VAR_OUT_D] end
+            if     z_range == z_all;     [(id=1, name="u"), (id=2, name="v")]
+            elseif z_range == z_surface; [(id=1, name="h")]
+            elseif !kajiura;             [(id=1, name="d")] 
+            else                         [(id=1, name="d"), (id=2, name="h")] end
 
         # b for seafloor
-        out_vars_stat = if z_range == z_floor; [VAR_OUT_B] else [] end
+        out_vars_stat = if z_range == z_floor; [(id=1, name="b")] else [] end
 
         n_out_vars_dyn              = length(out_vars_dyn)
         n_out_vars_stat             = length(out_vars_stat)
@@ -212,7 +209,6 @@ module Rasterization
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
         for var ∈ out_vars_dyn
-            println(var.name)
             l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_y, n_samples_x, n_timesteps_per_iteration))
         end
 
@@ -320,6 +316,16 @@ module Rasterization
                 print_progress = true)
 
             println("Done.")
+
+            water_level = 2000.
+
+            if kajiura
+                for t ∈ 1:n_times
+                    l_dyn_output_grids[2][:, :, t] .= 0.
+                    apply_kajiura!(l_stat_output_grids[1], l_dyn_output_grids[1][:, :, t], view(l_dyn_output_grids[2], :, :, t),
+                                   i_domain_z[1]+water_level, i_domain_z[2]+water_level, sampling_rate[1], sampling_rate[2], water_level)
+                end
+            end
 
             #============================================#
             # Write NetCDF outputs for this iteration
@@ -550,16 +556,16 @@ module Rasterization
 
                                     # Calculate bathymetry height from triangle's z-coords and interpolate between them
                                     b = sum(m43_tet_points[1:3,3] .* v_λ) / 3.
-                                    l_stat_grids[VAR_OUT_B.id][idx_g_y, idx_g_x] = b
+                                    l_stat_grids[1][idx_g_y, idx_g_x] = b
                                 end
 
                                 for t ∈ 1:n_times
-                                    l_dyn_grids[VAR_OUT_D.id][idx_g_y, idx_g_x, t] = in_vars[tet_id, t, VAR_IN_W]
+                                    l_dyn_grids[1][idx_g_y, idx_g_x, t] = in_vars[tet_id, t, 1]
                                 end
                             elseif z_range == z_surface
                                 for t ∈ 1:n_times
-                                    η = in_vars[tet_id, t, VAR_IN_W]
-                                    l_dyn_grids[VAR_OUT_η.id][idx_g_y, idx_g_x, t] = η
+                                    η = in_vars[tet_id, t, 1]
+                                    l_dyn_grids[1][idx_g_y, idx_g_x, t] = η
                                 end
                             else # Processing triangles but neither on floor nor on surface. No use for that at the moment
                                 throw(ErrorException("Not implemented."))
