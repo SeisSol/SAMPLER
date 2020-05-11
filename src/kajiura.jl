@@ -74,7 +74,7 @@ module Kajiura
 
             σ_inv += G(0)
 
-            return h^2 / σ_inv
+            return h^2 / (σ_inv * Δx * Δy)
         end
 
         l_σ = [σ(h) for h ∈ l_h]
@@ -97,6 +97,7 @@ module Kajiura
 
         i_nonzero_x = [[nx, 1] for i ∈ 1:nthreads()]
         i_nonzero_y = [[ny, 1] for i ∈ 1:nthreads()]
+        l_nonzero_cells = zeros(Int, nx)
 
         Threads.@threads for i ∈ 1:nx
             tid = threadid()
@@ -111,6 +112,7 @@ module Kajiura
                 h_ij = water_level-b[j, i]
                 σ_ij = σ(h_ij)
                 mmn_quantities[j, i] = (Δx * Δy / h_ij^2 * σ_ij * D_ij, h_ij)
+                l_nonzero_cells[i] += 1
 
                 # TODO thread safety
                 if i_nonzero_x[tid][1] > i; i_nonzero_x[tid][1] = i end
@@ -139,18 +141,43 @@ module Kajiura
 
         @printf("  Applying Kajiura filter to %.2f%% of the domain.\n", length(n_rng)*length(m_rng)/(nx*ny)*100)
 
-        Threads.@threads for n ∈ n_rng
-            for m ∈ m_rng
-                for i ∈ max(1, n - n_max):min(nx, n + n_max), 
-                    j ∈ max(1, m - m_max):min(ny, m + m_max)
+        n_threads = nthreads()
+        n_nonzero_cells = sum(l_nonzero_cells)
+        n_cells_per_thread = round(Int, n_nonzero_cells / n_threads)
+        l_start_cols = Array{Int, 1}(undef, n_threads)
 
-                    q = mmn_quantities[j, i] # = (factor_ij, h_ij)
-                    if abs(q[1]) < eps(); continue end
-                    η[m, n] += q[1] * G(mji_abs[abs(m-j)+1, abs(n-i)+1]/q[2])
-                end
+        l_start_cols[1] = n_rng[1]
+        for i ∈ 2:n_threads
+            start_col = l_start_cols[i-1]
+            n_cells = 0
+            while n_cells < n_cells_per_thread
+                n_cells += l_nonzero_cells[start_col]
+                start_col += 1
             end
-            if threadid() == 1
-                @printf("  Kajiura: %.2f%% done.\n", (n-n_rng[1])/length(n_rng)*nthreads()*100)
+            l_start_cols[i] = start_col
+        end
+
+        Threads.@threads for tid ∈ 1:n_threads
+            n_end_col = (tid == n_threads) ? n_rng[end] : (l_start_cols[tid+1] - 1)
+            thread_n_rng = l_start_cols[tid]:n_end_col
+
+            cols_processed = 0
+            cols_total = length(thread_n_rng)
+
+            for n ∈ thread_n_rng
+                for m ∈ m_rng
+                    for i ∈ max(1, n - n_max):min(nx, n + n_max), 
+                        j ∈ max(1, m - m_max):min(ny, m + m_max)
+
+                        q = mmn_quantities[j, i] # = (factor_ij, h_ij)
+                        if abs(q[1]) < eps(); continue end
+                        η[m, n] += q[1] * G(mji_abs[abs(m-j)+1, abs(n-i)+1]/q[2])
+                    end
+                end
+                if threadid() == 1
+                    cols_processed += 1
+                    @printf("  Kajiura: %.2f%% done.\n", (cols_processed)/cols_total*100)
+                end
             end
         end
     end
