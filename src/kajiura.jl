@@ -150,7 +150,7 @@ module Kajiura
         for i ∈ 2:n_threads
             start_col = l_start_cols[i-1]
             n_cells = 0
-            while n_cells < n_cells_per_thread
+            while n_cells < n_cells_per_thread && start_col != nx
                 n_cells += l_nonzero_cells[start_col]
                 start_col += 1
             end
