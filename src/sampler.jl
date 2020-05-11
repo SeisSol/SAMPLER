@@ -18,52 +18,76 @@ using Printf
 using Base.Filesystem
 using Pkg
 
-Pkg.precompile()
-println("Done.")
-
+const ARGS = Args.read_args()
 
 function main()
-    println("Using $(nthreads()) threads.")
-    args = Args.read_args()
+    
+    sampling_rate = ARGS["sampling-rate"]
+    has_3d = !isempty(ARGS["input-file-3d"])
 
-    sampling_rate     = args["sampling-rate"]
+    #============================================#
+    # Compare timesteps of 2D and 3D files.
+    # They must be equal.
+    #============================================#
 
-    times = XDMF.timesteps_of(args["input-file-3d"])
-    times_2d = XDMF.timesteps_of(args["input-file-2d"])
-    t_start  = args["output-time"].t_start
-    t_end    = args["output-time"].t_end
+    times    = XDMF.timesteps_of(ARGS["input-file-2d"])
+    t_start  = ARGS["output-time"].t_start
+    t_end    = ARGS["output-time"].t_end
 
-    if (times != times_2d)
-        throw(ArgumentError("Timesteps of 2D and 3D input files do not match!"))
+    if has_3d
+        times_3d = XDMF.timesteps_of(ARGS["input-file-3d"])
+
+        if (times_3d != times)
+            throw(ArgumentError("Timesteps of 2D and 3D input files do not match!"))
+        end
+
+        times_3d = nothing 
     end
 
-    times_2d = nothing 
-
-    out_filename = args["output-file"]
+    # Delete output file if it already exists
+    out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
 
-    triangles,  points_2d = XDMF.grid_of(args["input-file-2d"])
+    #============================================#
+    # Process 2D seafloor
+    #============================================#
 
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(args["input-file-2d"], "W"), ["W"], 
-                            times, sampling_rate, out_filename, args["memory-limit"]; z_range=Rasterization.z_floor, create_file=true)
+    triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
 
-    Profile.clear()
+    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+                            times, sampling_rate, out_filename, ARGS["memory-limit"]; 
+                            z_range=Rasterization.z_floor, create_file=true, kajiura=ARGS["kajiura"])
+
     GC.gc(true)
 
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(args["input-file-2d"], "W"), ["W"], 
-                            times, sampling_rate, out_filename, args["memory-limit"]; z_range=Rasterization.z_surface)
+    #============================================#
+    # Process 2D sea surface
+    #============================================#
 
-    Profile.clear()
+    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+                            times, sampling_rate, out_filename, ARGS["memory-limit"]; 
+                            z_range=Rasterization.z_surface)
+
 
     triangles = nothing
     points_2d = nothing
     GC.gc(true)
-    tetrahedra, points_3d = XDMF.grid_of(args["input-file-3d"])
 
-    Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], "u", "v"), ["u", "v"], 
-                            times, sampling_rate, out_filename, args["memory-limit"])
+    #============================================#
+    # Process 3D mesh
+    #============================================#
 
-    Profile.clear()
+    if has_3d
+        tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
+
+        Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
+                                times, sampling_rate, out_filename, ARGS["memory-limit"])
+    end
 end
+
+println("Using $(nthreads()) threads.")
+
+Pkg.precompile()
+println("Done.")
 
 main()

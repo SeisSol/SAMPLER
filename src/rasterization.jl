@@ -29,13 +29,6 @@ module Rasterization
 
     const VAR_IN_W = 1
 
-    #=
-    tetrahedra, points_3d, XDMF.data_of(args["input-file-3d"], var_names_3d...), var_names_3d, 
-    triangles,  points_2d, XDMF.data_of(args["input-file-2d"], (var_names_floor+var_names_surface)...), 
-    var_names_floor, var_names_surface, times_3d, sampling_rate, 
-    args["output-file"], args["memory-limit"]
-    =#
-
     function rasterize(
         simplices           :: AbstractArray{INDEX_TYPE, 2}, 
         points              :: AbstractArray{Float64, 2},
@@ -54,10 +47,11 @@ module Rasterization
         # to indicate their type or unit:
         #   i_  : Interval / Pair / 2-Tuple
         #   n_  : Count / Number of Objects
-        #   o_  : Array offset
+        #   o_  : Array Offset
         #   b_  : Size in Bytes
         #   l_  : 1D-Array / List
         #   d_  : Date & Time
+        #   t_  : Timestep Index
         #   mMN_: M×N Matrix
         #   vN_ : N-Dimensional Vector
         #   s_  : String
@@ -104,12 +98,13 @@ module Rasterization
 
         n_in_vars                   = length(in_var_names)
 
-        # u, v for 3d; η for surface; b (static!) and d for seafloor
+        # u, v for 3d; η for surface; d for seafloor
         out_vars_dyn = 
             if     z_range == z_all;     [VAR_U, VAR_V]
             elseif z_range == z_surface; [VAR_OUT_η]
             else                         [VAR_OUT_D] end
 
+        # b for seafloor
         out_vars_stat = if z_range == z_floor; [VAR_OUT_B] else [] end
 
         n_out_vars_dyn              = length(out_vars_dyn)

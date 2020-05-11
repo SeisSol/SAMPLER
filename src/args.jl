@@ -126,12 +126,16 @@ module Args
             #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean floor. \n
             #                    \t Examples: W; UVW"""
             #    default = "W"
-            "input-file-3d"
-                help = "The SeisSol 3D output in XDMF format. Use the output file without the _surface suffix."
-                required = true
+            "--kajiura"
+                help = "Apply the Kajiura filter to the bottom displacement to get the surface displacement.
+                                \t Only applies to 2D input files where only bottom displacement is available."
+                action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."
                 required = true
+            "input-file-3d"
+                help = "The SeisSol 3D output in XDMF format. Use the output file without the _surface suffix."
+                default = ""
         end
 
         args = parse_args(parser_settings)
@@ -141,11 +145,13 @@ module Args
     end
 
     function validate_args!(args::Dict)
-        # TODO
         args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
         #args["vars-3d"]      = [x for x ∈ split(args["vars-3d"],      "") if x != ""]
         #args["vars-surface"] = [x for x ∈ split(args["vars-surface"], "") if x != ""]
         #args["vars-floor"]   = [x for x ∈ split(args["vars-floor"],   "") if x != ""]
+
+
+
         return args
     end
 end
