@@ -160,6 +160,7 @@ module Kajiura
         Threads.@threads for tid ∈ 1:n_threads
             n_end_col = (tid == n_threads) ? n_rng[end] : (l_start_cols[tid+1] - 1)
             thread_n_rng = l_start_cols[tid]:n_end_col
+            if thread_n_rng[1] > nx || n_end_col > nx; continue end
 
             cols_processed = 0
             cols_total = length(thread_n_rng)
