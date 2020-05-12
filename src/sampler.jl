@@ -50,6 +50,16 @@ function main()
         times_3d = nothing 
     end
 
+    timestep_begin = 1
+    while timestep_begin != length(times) && times[timestep_begin + 1] < t_start
+        timestep_begin += 1
+    end
+
+    timestep_end = length(times)
+    while timestep_end != 1 && times[timestep_end - 1] > t_end
+        timestep_end -= 1
+    end
+
     # Delete output file if it already exists
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
@@ -61,8 +71,9 @@ function main()
     triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
 
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
-                            times, sampling_rate, out_filename, ARGS["memory-limit"]; 
-                            z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura)
+                            times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                            z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura, 
+                            t_begin=timestep_begin, t_end=timestep_end)
 
     GC.gc(true)
 
@@ -72,8 +83,9 @@ function main()
 
     if !has_kajiura
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
-                                times, sampling_rate, out_filename, ARGS["memory-limit"]; 
-                                z_range=Rasterization.z_surface)
+                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                                z_range=Rasterization.z_surface, 
+                                t_begin=timestep_begin, t_end=timestep_end)
     end
 
 
@@ -89,7 +101,8 @@ function main()
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
-                                times, sampling_rate, out_filename, ARGS["memory-limit"])
+                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                                t_begin=timestep_begin, t_end=timestep_end)
     end
 end
 

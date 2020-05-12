@@ -92,12 +92,22 @@ module Kajiura
         n_max = ceil(Int, n_h * h_max / Δx)
         m_max = ceil(Int, n_h * h_max / Δy)
 
+        println("h_max=$h_max, h_min=$h_min, n_max=$n_max, m_max=$m_max")
+
         mmn_quantities = Array{NTuple{2, Float64}, 2}(undef, (ny, nx))
         mji_abs = Array{Float64, 2}(undef, (m_max+1, n_max+1))
 
         i_nonzero_x = [[nx, 1] for i ∈ 1:nthreads()]
         i_nonzero_y = [[ny, 1] for i ∈ 1:nthreads()]
         l_nonzero_cells = zeros(Int, nx)
+
+        #============================================#
+        # Precalculate factors that are constant for
+        # a specific bottom displacement D_ij.
+        # As these will be used in 
+        #============================================#
+
+        println("h_max_b=", water_level-minimum(b), "; h_min_b=", water_level-maximum(b))
 
         Threads.@threads for i ∈ 1:nx
             tid = threadid()
@@ -140,6 +150,7 @@ module Kajiura
         m_rng = max(1, i_nonzero_y[1]-m_max):min(ny, i_nonzero_y[2]+m_max)
 
         @printf("  Applying Kajiura filter to %.2f%% of the domain.\n", length(n_rng)*length(m_rng)/(nx*ny)*100)
+        println("  Kajiura: Kernel size is up to ", (2*n_max+1) ,"×", (2*m_max+1))
 
         n_threads = nthreads()
         n_nonzero_cells = sum(l_nonzero_cells)
@@ -170,12 +181,12 @@ module Kajiura
                     for i ∈ max(1, n - n_max):min(nx, n + n_max), 
                         j ∈ max(1, m - m_max):min(ny, m + m_max)
 
-                        q = mmn_quantities[j, i] # = (factor_ij, h_ij)
+                        @inbounds q = mmn_quantities[j, i] # = (factor_ij, h_ij)
                         if abs(q[1]) < eps(); continue end
-                        η[m, n] += q[1] * G(mji_abs[abs(m-j)+1, abs(n-i)+1]/q[2])
+                        @inbounds η[m, n] += q[1] * G(mji_abs[abs(m-j)+1, abs(n-i)+1]/q[2])
                     end
                 end
-                if threadid() == 1
+                if threadid() == n_threads ÷ 2
                     cols_processed += 1
                     @printf("  Kajiura: %.2f%% done.\n", (cols_processed)/cols_total*100)
                 end

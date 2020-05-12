@@ -29,7 +29,7 @@ module Rasterization
         sampling_rate       :: NTuple{3, Float64}, 
         out_filename        :: AbstractString,
         mem_limit           :: Int64; 
-        z_range = z_all, t_start = -Inf64, t_end = Inf64, create_file=false, kajiura=false) where INDEX_TYPE <: Integer
+        z_range = z_all, t_begin = 1, t_end = length(times), create_file=false, kajiura=false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -107,14 +107,15 @@ module Rasterization
         n_out_vars_dyn              = length(out_vars_dyn)
         n_out_vars_stat             = length(out_vars_stat)
 
+        n_timesteps                 = t_end - t_begin + 1
         n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_in_vars * b_mem_per_var_and_timestep)
-        n_iterations                = ceil(Int, length(times) / n_timesteps_per_iteration)
+        n_iterations                = ceil(Int, n_timesteps / n_timesteps_per_iteration)
         
         n_simplex_points            = size(simplices, 1)
         n_dims                      = n_simplex_points - 1
         n_simplices                 = size(simplices, 2)
         n_simplices_per_thread      = n_simplices / n_threads
-        n_total_problems            = length(times) * n_simplices
+        n_total_problems            = n_timesteps * n_simplices
 
         s_simplex_name              = n_dims == 3 ? "tetrahedron" : "triangle"
         s_simplex_name_plural       = n_dims == 3 ? "tetrahedra" : "triangles"
@@ -201,7 +202,7 @@ module Rasterization
                 Main.Util.get_or_create_netcdf(out_filename; create=true,
                                                x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
                                                y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                               t_vals=times)
+                                               t_vals=times[t_begin:t_end])
             else
                 Main.Util.get_or_create_netcdf(out_filename)
             end
@@ -226,15 +227,17 @@ module Rasterization
         # Sample tetrahedra and write to output
         #============================================#
 
-        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ", n_timesteps_per_iteration, 
-                " timesteps at once (therefore needing ", n_iterations , " iterations).")
+        println("Processing timesteps ", t_begin-1, "-", t_end-1, " of 0-", length(times)-1, ".")
+        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ", 
+                n_timesteps_per_iteration, " timesteps at once (therefore needing ", 
+                n_iterations , " iterations).")
 
         # In each iteration, process ALL tetrahedra for ALL variables for as many timesteps as possible*
         # *possible means that the total memory footprint cannot be exceeded. This limits the number of 
         # timesteps that can be stored in l_iter_output_grids. 
         for iteration ∈ 1:n_iterations
-            t_start = (iteration - 1) * n_timesteps_per_iteration + 1
-            n_times = min(length(times) - (iteration - 1) * n_timesteps_per_iteration, n_timesteps_per_iteration)
+            t_start = t_begin + (iteration - 1) * n_timesteps_per_iteration
+            n_times = min(n_timesteps - (iteration - 1) * n_timesteps_per_iteration, n_timesteps_per_iteration)
 
             #============================================#
             # Prefetch the values of all vars in all
@@ -317,13 +320,11 @@ module Rasterization
 
             println("Done.")
 
-            water_level = 2000.
-
             if kajiura
                 for t ∈ 1:n_times
                     l_dyn_output_grids[2][:, :, t] .= 0.
                     apply_kajiura!(l_stat_output_grids[1], l_dyn_output_grids[1][:, :, t], view(l_dyn_output_grids[2], :, :, t),
-                                   i_domain_z[1]+water_level, i_domain_z[2]+water_level, sampling_rate[1], sampling_rate[2], water_level)
+                                   i_domain_z[1], i_domain_z[2], sampling_rate[1], sampling_rate[2], 2000.)
                 end
             end
 
@@ -333,7 +334,7 @@ module Rasterization
 
             println("Writing outputs for timesteps $(t_start-1)-$(t_start+n_times-2)...")
             
-            start = [1, 1, t_start]
+            start = [1, 1, (t_start-t_begin)+1]
             count = [-1, -1, n_times]
 
             for var ∈ out_vars_dyn
