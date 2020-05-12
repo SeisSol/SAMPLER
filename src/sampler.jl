@@ -51,12 +51,12 @@ function main()
     end
 
     timestep_begin = 1
-    while timestep_begin != length(times) && times[timestep_begin + 1] < t_start
+    while timestep_begin != length(times) && times[timestep_begin + 1] ≤ t_start
         timestep_begin += 1
     end
 
     timestep_end = length(times)
-    while timestep_end != 1 && times[timestep_end - 1] > t_end
+    while timestep_end != 1 && times[timestep_end - 1] ≥ t_end
         timestep_end -= 1
     end
 
