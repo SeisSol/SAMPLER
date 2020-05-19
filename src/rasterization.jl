@@ -324,7 +324,7 @@ module Rasterization
                 for t ∈ 1:n_times
                     l_dyn_output_grids[2][:, :, t] .= 0.
                     apply_kajiura!(l_stat_output_grids[1], l_dyn_output_grids[1][:, :, t], view(l_dyn_output_grids[2], :, :, t),
-                                   i_domain_z[1], i_domain_z[2], sampling_rate[1], sampling_rate[2], 2000.)
+                                   i_domain_z[1], i_domain_z[2], sampling_rate[1], sampling_rate[2], water_height=2000.)
                 end
             end
 

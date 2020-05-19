@@ -2,6 +2,7 @@ module Kajiura
     using Interpolations
     using Base.Threads
     using Printf
+    using FFTW
 
     export apply_kajiura!, precalculate_σ
 
@@ -84,113 +85,48 @@ module Kajiura
     end
 
     function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 2}, η::AbstractArray{Float64, 2}, 
-                   h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64, water_level :: Float64; n_h :: Float64 = 5., 
+                   h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; water_level :: Float64 = 0., n_h :: Float64 = 5., 
                    σ = precalculate_σ(h_min, h_max, Δx, Δy; n_h=n_h))
         
-        ny, nx = size(b)
+        filter_nx_half = ceil(Int, n_h * h_max / Δx / 2)
+        filter_ny_half = ceil(Int, n_h * h_max / Δy / 2)
 
-        n_max = ceil(Int, n_h * h_max / Δx)
-        m_max = ceil(Int, n_h * h_max / Δy)
+        nx = size(η, 2)
+        ny = size(η, 1)
 
-        println("h_max=$h_max, h_min=$h_min, n_max=$n_max, m_max=$m_max")
+        filter = zeros(Float64, (ny, nx))
 
-        mmn_quantities = Array{NTuple{2, Float64}, 2}(undef, (ny, nx))
-        mji_abs = Array{Float64, 2}(undef, (m_max+1, n_max+1))
+        @assert filter_nx_half < nx
+        @assert filter_ny_half < ny
 
-        i_nonzero_x = [[nx, 1] for i ∈ 1:nthreads()]
-        i_nonzero_y = [[ny, 1] for i ∈ 1:nthreads()]
-        l_nonzero_cells = zeros(Int, nx)
-
-        #============================================#
-        # Precalculate factors that are constant for
-        # a specific bottom displacement D_ij.
-        # As these will be used in 
-        #============================================#
-
-        println("h_max_b=", water_level-minimum(b), "; h_min_b=", water_level-maximum(b))
-
-        Threads.@threads for i ∈ 1:nx
-            tid = threadid()
-
-            for j ∈ 1:ny
-                D_ij = d[j, i]
-                if abs(D_ij) < eps()
-                    mmn_quantities[j, i] = (0., NaN64)
-                    continue
-                end
-
-                h_ij = water_level-b[j, i]
-                σ_ij = σ(h_ij)
-                mmn_quantities[j, i] = (Δx * Δy / h_ij^2 * σ_ij * D_ij, h_ij)
-                l_nonzero_cells[i] += 1
-
-                # TODO thread safety
-                if i_nonzero_x[tid][1] > i; i_nonzero_x[tid][1] = i end
-                if i_nonzero_y[tid][1] > j; i_nonzero_y[tid][1] = j end
-                if i_nonzero_x[tid][2] < i; i_nonzero_x[tid][2] = i end
-                if i_nonzero_y[tid][2] < j; i_nonzero_y[tid][2] = j end
+        println("  Computing filter matrix...")
+        Threads.@threads for x ∈ -filter_nx_half:filter_nx_half
+            for y ∈ -filter_ny_half:filter_ny_half
+                filter[ny ÷ 2 + y, nx ÷ 2 + x] = G(sqrt((x * Δx)^2 + (y * Δy)^2) / h_max)
             end
         end
 
-        i_nonzero_x = (minimum(rng -> rng[1], i_nonzero_x), maximum(rng -> rng[2], i_nonzero_x))
-        i_nonzero_y = (minimum(rng -> rng[1], i_nonzero_y), maximum(rng -> rng[2], i_nonzero_y))
-
-        if i_nonzero_x[1] > i_nonzero_x[2]
-            println("  No non-zero displacements found, skipping Kajiura filter.")
-            return
-        end
-
-        Threads.@threads for i ∈ 0:n_max
-            for j ∈ 0:m_max
-                mji_abs[j+1, i+1] = sqrt((i * Δx)^2 + (j*Δy)^2)
+        println("  Computing displacement matrix...")
+        Threads.@threads for x ∈ 1:size(η, 2)
+            for y ∈ 1:size(η, 1)
+                h_yx = water_level - b[y, x]
+                η[y, x] = σ(h_yx) * Δx * Δy / h_yx^2 * d[y, x]
             end
         end
 
-        n_rng = max(1, i_nonzero_x[1]-n_max):min(nx, i_nonzero_x[2]+n_max)
-        m_rng = max(1, i_nonzero_y[1]-m_max):min(ny, i_nonzero_y[2]+m_max)
+        println("  Computing filter FFT...")
+        Filter = fft(filter)
 
-        @printf("  Applying Kajiura filter to %.2f%% of the domain.\n", length(n_rng)*length(m_rng)/(nx*ny)*100)
-        println("  Kajiura: Kernel size is up to ", (2*n_max+1) ,"×", (2*m_max+1))
+        println("  Computing displacement FFT...")
+        Η = fft(η)
 
-        n_threads = nthreads()
-        n_nonzero_cells = sum(l_nonzero_cells)
-        n_cells_per_thread = round(Int, n_nonzero_cells / n_threads)
-        l_start_cols = Array{Int, 1}(undef, n_threads)
+        println("  Computing product...")
+        Η .*= Filter
 
-        l_start_cols[1] = n_rng[1]
-        for i ∈ 2:n_threads
-            start_col = l_start_cols[i-1]
-            n_cells = 0
-            while n_cells < n_cells_per_thread && start_col != nx
-                n_cells += l_nonzero_cells[start_col]
-                start_col += 1
-            end
-            l_start_cols[i] = start_col
-        end
+        println("  Computing IFFT...")
+        η_complex = reinterpret(Float64, ifft(Η))
+        copyto!(η, @view η_complex[1:2:end-1])
 
-        Threads.@threads for tid ∈ 1:n_threads
-            n_end_col = (tid == n_threads) ? n_rng[end] : (l_start_cols[tid+1] - 1)
-            thread_n_rng = l_start_cols[tid]:n_end_col
-            if thread_n_rng[1] > nx || n_end_col > nx; continue end
-
-            cols_processed = 0
-            cols_total = length(thread_n_rng)
-
-            for n ∈ thread_n_rng
-                for m ∈ m_rng
-                    for i ∈ max(1, n - n_max):min(nx, n + n_max), 
-                        j ∈ max(1, m - m_max):min(ny, m + m_max)
-
-                        @inbounds q = mmn_quantities[j, i] # = (factor_ij, h_ij)
-                        if abs(q[1]) < eps(); continue end
-                        @inbounds η[m, n] += q[1] * G(mji_abs[abs(m-j)+1, abs(n-i)+1]/q[2])
-                    end
-                end
-                if threadid() == n_threads ÷ 2
-                    cols_processed += 1
-                    @printf("  Kajiura: %.2f%% done.\n", (cols_processed)/cols_total*100)
-                end
-            end
-        end
+        println("  Done!")
     end
 end
