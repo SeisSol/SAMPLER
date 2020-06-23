@@ -39,9 +39,9 @@ module Kajiura
         Δh = (h_max - h_min) / 10
         l_h = h_min:Δh:(h_max + Δh)
 
-        #                     h^2
-        # σ = ———————————————————————————————————
-        #       Σ   Σ  G(√[(nΔx)^2 + (mΔy)^2]/h)
+        #                       h^2
+        # σ = ———————————————————————————————————————
+        #       Σ   Σ  G(√[(nΔx)^2 + (mΔy)^2]/h)ΔxΔy
         #      n∈N m∈M
         #
         # N = {n ∈ Z| |nΔx| ≤ n_h * h}
@@ -102,7 +102,7 @@ module Kajiura
         println("  Computing filter matrix...")
         Threads.@threads for x ∈ -filter_nx_half:filter_nx_half
             for y ∈ -filter_ny_half:filter_ny_half
-                filter[ny ÷ 2 + y, nx ÷ 2 + x] = G(sqrt((x * Δx)^2 + (y * Δy)^2) / h_max)
+                filter[((ny + y) % ny) + 1, ((nx + x) % nx) + 1] = G(sqrt((x * Δx)^2 + (y * Δy)^2) / h_max)
             end
         end
 

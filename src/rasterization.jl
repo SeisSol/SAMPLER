@@ -125,12 +125,69 @@ module Rasterization
         # synchronization & lock contention later on.
         #============================================#
 
+        n_threads = nthreads()
         println("Binning $n_simplices $s_simplex_name_plural into $(n_threads)+$(n_threads - 1)+1 buckets...")
 
-        # For each tetrahedron, assign a bin with an ID ∈ 1:2*n_threads based on its location
-        l_bin_ids = Array{UInt8, 1}(undef, n_simplices)
+        l_x_simps = zeros(Float64, n_samples_x)
+        m43_simp_points = Array{Float64, 2}(undef, (n_simplex_points, 3))
 
-        Threads.@threads for thread_id ∈ 1:n_threads
+        for tet_id ∈ []#1:n_simplices
+            simp = (@view simplices[:, tet_id])
+            for i ∈ 1:n_simplex_points, dim ∈ 1:3
+                m43_simp_points[i, dim] = points[dim, simp[i]]
+            end
+
+            if z_range != z_all
+                if minimum(m43_simp_points[:, 3]) > i_domain_z[2] || maximum(m43_simp_points[:, 3]) < i_domain_z[1]
+                    continue
+                end
+            end
+
+            x_min = minimum(m43_simp_points[:, 1])
+            x_max = maximum(m43_simp_points[:, 1])
+            y_min = minimum(m43_simp_points[:, 2])
+            y_max = maximum(m43_simp_points[:, 2])
+            z_min = minimum(m43_simp_points[:, 3])
+            z_max = maximum(m43_simp_points[:, 3])
+
+            idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
+            idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
+
+            idx_x_min = max(1, min(idx_x_min, n_samples_x))
+            idx_x_max = max(1, min(idx_x_max, n_samples_x))
+
+            aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
+            # Obtained through linear regression on benchmark data
+            estimated_workload_factor = 17139 * aabb_volume + 12458
+
+            l_x_simps[idx_x_min:idx_x_max] .+= 1e-3 #estimated_workload_factor / 1e9
+        end
+
+        l_x_simps .= 1.
+
+        l_bin_start_idxs = Array{Int, 1}(undef, n_threads)
+        n_opt_simps_per_p_bin = sum(l_x_simps) / n_threads
+        l_bin_start_idxs[1] = 1
+
+        next_x_idx = 1
+        for bin_id ∈ 1:(n_threads-1)
+            current_simp_count = 0
+            new_simp_count = 0
+            while (n_opt_simps_per_p_bin - current_simp_count > new_simp_count - n_opt_simps_per_p_bin) && next_x_idx <= n_samples_x
+                current_simp_count = new_simp_count
+                new_simp_count = current_simp_count + l_x_simps[next_x_idx]
+                next_x_idx += 1
+            end
+
+            l_bin_start_idxs[bin_id + 1] = min(next_x_idx, n_samples_x)
+        end
+
+        println(l_bin_start_idxs)
+
+        # For each tetrahedron, assign a bin with an ID ∈ 1:2*n_threads based on its location
+        l_bin_ids = Array{UInt16, 1}(undef, n_simplices)
+
+        Threads.@threads for thread_id ∈ 1:nthreads()
             thread_range_min = floor(INDEX_TYPE, (thread_id - 1) * n_simplices_per_thread) + 1
             thread_range_max = thread_id == n_threads ? n_simplices : floor(INDEX_TYPE, thread_id * n_simplices_per_thread)
 
@@ -160,8 +217,9 @@ module Rasterization
                 #=@inbounds=# idx_x_min = floor(Int,(coord_x_min - i_domain_x[1]) / sampling_rate[1]) + 1
                 #=@inbounds=# idx_x_max =  ceil(Int,(coord_x_max - i_domain_x[1]) / sampling_rate[1])
 
-                bin_id_l = floor(UInt8, idx_x_min / n_samples_x * n_threads) + 1
-                bin_id_r =  ceil(UInt8, idx_x_max / n_samples_x * n_threads)
+                bin_id_l = findlast(bin_start_idx -> bin_start_idx ≤ idx_x_min, l_bin_start_idxs)
+                bin_id_r = findlast(bin_start_idx -> idx_x_max ≥ bin_start_idx, l_bin_start_idxs)
+                if bin_id_r > n_threads; bin_id_r = n_threads; end # The right border of the last bin is inclusive while the others are not.
 
                 # n_bins := 2*n_threads
                 # bin i ∈ 1:n_bins contains the tets completely inside the column of bin i
@@ -177,8 +235,9 @@ module Rasterization
             end # for tet_id
         end # for thread_id
 
-        # The number of tetrahedra in each respective bin
+        # The number of tetrahedra in each respective bin (only the first n_threads bins have been filled)
         l_bin_counts = zeros(INDEX_TYPE, 2*n_threads + 1)
+
         for bin_id ∈ l_bin_ids
             l_bin_counts[bin_id] += 1
         end
@@ -265,6 +324,8 @@ module Rasterization
                     grid .= 0
                 end
             end
+
+            myx_output_sample_counts .= 0
 
             #============================================#
             # Binning
@@ -369,7 +430,7 @@ module Rasterization
         
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
-        tet_sample_counts   = Array{UInt8, 2}(undef, (64, 64))
+        tet_sample_counts   = Array{UInt16, 2}(undef, (64, 64))
         
         d_start             = now()
         d_last_printed      = d_start
@@ -377,13 +438,15 @@ module Rasterization
         n_bin_rasterized    = 0
         n_bin_total         = l_bin_counts[bin_id]
 
+        thread_time_start = time_ns()
+
         for tet_id ∈ 1:n_tetrahedra
             # Only process tetrahedra in thread's own bin
             if l_bin_ids[tet_id] != bin_id
                 continue
             end
 
-            if print_progress
+            if print_progress && false
                 d_now = now()
 
                 if (d_now - d_last_printed) >= print_interval && n_bin_rasterized > 0
@@ -439,7 +502,7 @@ module Rasterization
             # By allocating double the size of the bounding box, future tets that are just a bit larger than the current one
             # will not trigger a resize operation.
             if size(tet_sample_counts, 1) < n_current_cells_y || size(tet_sample_counts, 2) < n_current_cells_x
-                tet_sample_counts = Array{UInt8, 2}(undef, (n_current_cells_y * 2, n_current_cells_x * 2))
+                tet_sample_counts = Array{UInt16, 2}(undef, (n_current_cells_y * 2, n_current_cells_x * 2))
             end
 
             # For the bounding box of the current tet, reset all sample counts to 0
@@ -608,6 +671,11 @@ module Rasterization
 
             n_bin_rasterized += 1
         end # for tet_id
+
+        thread_time = time_ns() - thread_time_start
+        open("time-$bin_id.csv", "w+") do fi
+            println(fi, thread_time, ';', n_bin_rasterized)
+        end
     end
 
     @inline function cross3!(a, b, ret)
