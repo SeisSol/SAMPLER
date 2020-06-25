@@ -21,8 +21,6 @@ module Rasterization
     const EDGE_TOL = .0
     const Z_RANGE_TOL = .001
 
-    debug_load_balancer = "DUMMY"
-
     function rasterize(
         simplices       :: AbstractArray{INDEX_TYPE, 2}, 
         points          :: AbstractArray{Float64, 2},
@@ -56,8 +54,6 @@ module Rasterization
         #   vN_ : N-Dimensional Vector
         #   s_  : String
         #============================================#
-
-        debug_load_balancer = load_balancer
 
         #============================================#
         # Gather domain information
@@ -274,15 +270,15 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        nc :: NcFile = 
-            if create_file 
-                Main.Util.get_or_create_netcdf(out_filename; create=true,
-                                               x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-                                               y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                               t_vals=times[t_begin:t_end])
-            else
-                Main.Util.get_or_create_netcdf(out_filename)
-            end
+        nc = nothing
+            #if create_file 
+            #    Main.Util.get_or_create_netcdf(out_filename; create=true,
+            #                                   x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+            #                                   y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+            #                                   t_vals=times[t_begin:t_end])
+            #else
+            #    Main.Util.get_or_create_netcdf(out_filename)
+            #end
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
@@ -367,7 +363,7 @@ module Rasterization
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    print_progress = (thread_id == n_threads ÷ 2))
+                    print_progress = (thread_id == n_threads ÷ 2), load_balancer=load_balancer)
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -383,7 +379,7 @@ module Rasterization
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    print_progress = (thread_id == n_threads ÷ 2))
+                    print_progress = (thread_id == n_threads ÷ 2), load_balancer=load_balancer)
             end # for thread_id
 
             # Lastly, the tets that overlapped multiple bins (practically never occurs!)
@@ -395,7 +391,7 @@ module Rasterization
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
                 l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                print_progress = true)
+                print_progress = true, load_balancer=load_balancer)
 
             println("Done.")
             exit(0) #benchmarking
@@ -440,7 +436,11 @@ module Rasterization
         n_samples_x,      n_samples_y,  n_samples_z,
         v_sampling_rate,  t_start,      n_times,
         l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
-        n_simplex_points, z_range;      print_progress=false)
+        n_simplex_points, z_range;      print_progress=false, load_balancer=nothing)
+
+        if isnothing(load_balancer)
+            exit(69)
+        end
 
         m43_tet_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
@@ -692,7 +692,7 @@ module Rasterization
         end # for tet_id
 
         thread_time = time_ns() - thread_time_start
-        open("time-$(Rasterization.debug_load_balancer == naive ? "naive" : Rasterization.debug_load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
+        open("time-$(load_balancer == naive ? "naive" : load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
             println(fi, thread_time, ';', n_bin_rasterized)
         end
     end
