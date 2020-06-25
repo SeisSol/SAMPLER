@@ -21,7 +21,7 @@ module Rasterization
     const EDGE_TOL = .0
     const Z_RANGE_TOL = .001
 
-    debug_load_balancer=naive
+    debug_load_balancer = "DUMMY"
 
     function rasterize(
         simplices       :: AbstractArray{INDEX_TYPE, 2}, 
@@ -692,7 +692,7 @@ module Rasterization
         end # for tet_id
 
         thread_time = time_ns() - thread_time_start
-        open("time-$(debug_load_balancer == naive ? "naive" : debug_load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
+        open("time-$(Rasterization.debug_load_balancer == naive ? "naive" : Rasterization.debug_load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
             println(fi, thread_time, ';', n_bin_rasterized)
         end
     end
