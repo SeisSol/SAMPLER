@@ -60,6 +60,15 @@ function main()
         timestep_end -= 1
     end
 
+    load_balancer = ARGS["load-balancer"]
+    if load_balancer == "naive"
+        load_balancer = Main.Rasterization.naive
+    elseif load_balancer == "count"
+        load_balancer = Main.Rasterization.count
+    else
+        load_balancer = Main.Rasterization.workload
+    end
+
     # Delete output file if it already exists
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
@@ -73,7 +82,7 @@ function main()
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                             times, sampling_rate, out_filename, ARGS["memory-limit"], 
                             z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura, 
-                            t_begin=timestep_begin, t_end=timestep_end)
+                            t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
 
     GC.gc(true)
 
@@ -85,7 +94,7 @@ function main()
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                 z_range=Rasterization.z_surface, 
-                                t_begin=timestep_begin, t_end=timestep_end)
+                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
     end
 
 
@@ -102,7 +111,7 @@ function main()
 
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                t_begin=timestep_begin, t_end=timestep_end)
+                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
     end
 end
 

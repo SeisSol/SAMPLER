@@ -11,25 +11,33 @@ module Rasterization
     export rasterize, ZRange
 
     @enum ZRange z_all=-1 z_floor=0 z_surface=1
+    @enum LoadBalancer naive=0 count=1 workload=2
 
     struct HesseNormalForm
-        n0              :: NTuple{3, Float64}
-        d               :: Float64
+        n0  :: NTuple{3, Float64}
+        d   :: Float64
     end
 
     const EDGE_TOL = .0
     const Z_RANGE_TOL = .001
 
+    debug_load_balancer=naive
+
     function rasterize(
-        simplices           :: AbstractArray{INDEX_TYPE, 2}, 
-        points              :: AbstractArray{Float64, 2},
-        in_vars             :: AbstractArray{A where A <: AbstractArray, 2},
-        in_var_names        :: AbstractArray,
-        times               :: AbstractArray{Float64, 1}, 
-        sampling_rate       :: NTuple{3, Float64}, 
-        out_filename        :: AbstractString,
-        mem_limit           :: Int64; 
-        z_range = z_all, t_begin = 1, t_end = length(times), create_file=false, kajiura=false) where INDEX_TYPE <: Integer
+        simplices       :: AbstractArray{INDEX_TYPE, 2}, 
+        points          :: AbstractArray{Float64, 2},
+        in_vars         :: AbstractArray{A where A <: AbstractArray, 2},
+        in_var_names    :: AbstractArray,
+        times           :: AbstractArray{Float64, 1}, 
+        sampling_rate   :: NTuple{3, Float64}, 
+        out_filename    :: AbstractString,
+        mem_limit       :: Int64; 
+        z_range         :: ZRange = z_all, 
+        t_begin         :: Integer = 1, 
+        t_end           :: Integer = length(times), 
+        create_file     :: Bool = false, 
+        kajiura         :: Bool = false, 
+        load_balancer   :: LoadBalancer = workload) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -48,6 +56,8 @@ module Rasterization
         #   vN_ : N-Dimensional Vector
         #   s_  : String
         #============================================#
+
+        debug_load_balancer = load_balancer
 
         #============================================#
         # Gather domain information
@@ -127,52 +137,60 @@ module Rasterization
 
         n_threads = nthreads()
         println("Binning $n_simplices $s_simplex_name_plural into $(n_threads)+$(n_threads - 1)+1 buckets...")
+        println("Load balancing using the $(load_balancer == naive ? "naive" : load_balancer == count ? "count" : "workload") balancer.")
 
         l_x_simps = zeros(Float64, n_samples_x)
         m43_simp_points = Array{Float64, 2}(undef, (n_simplex_points, 3))
 
-        for tet_id ∈ []#1:n_simplices
-            simp = (@view simplices[:, tet_id])
-            for i ∈ 1:n_simplex_points, dim ∈ 1:3
-                m43_simp_points[i, dim] = points[dim, simp[i]]
-            end
-
-            if z_range != z_all
-                if minimum(m43_simp_points[:, 3]) > i_domain_z[2] || maximum(m43_simp_points[:, 3]) < i_domain_z[1]
-                    continue
+        if load_balancer != naive
+            for tet_id ∈ 1:n_simplices
+                simp = (@view simplices[:, tet_id])
+                for i ∈ 1:n_simplex_points, dim ∈ 1:3
+                    m43_simp_points[i, dim] = points[dim, simp[i]]
                 end
-            end
 
-            x_min = minimum(m43_simp_points[:, 1])
-            x_max = maximum(m43_simp_points[:, 1])
-            y_min = minimum(m43_simp_points[:, 2])
-            y_max = maximum(m43_simp_points[:, 2])
-            z_min = minimum(m43_simp_points[:, 3])
-            z_max = maximum(m43_simp_points[:, 3])
+                if z_range != z_all
+                    if minimum(m43_simp_points[:, 3]) > i_domain_z[2] || maximum(m43_simp_points[:, 3]) < i_domain_z[1]
+                        continue
+                    end
+                end
 
-            idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
-            idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
+                x_min = minimum(m43_simp_points[:, 1])
+                x_max = maximum(m43_simp_points[:, 1])
+                y_min = minimum(m43_simp_points[:, 2])
+                y_max = maximum(m43_simp_points[:, 2])
+                z_min = minimum(m43_simp_points[:, 3])
+                z_max = maximum(m43_simp_points[:, 3])
 
-            idx_x_min = max(1, min(idx_x_min, n_samples_x))
-            idx_x_max = max(1, min(idx_x_max, n_samples_x))
+                idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
+                idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
 
-            aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
-            # Obtained through linear regression on benchmark data
-            estimated_workload_factor = 17139 * aabb_volume + 12458
+                idx_x_min = max(1, min(idx_x_min, n_samples_x))
+                idx_x_max = max(1, min(idx_x_max, n_samples_x))
 
-            l_x_simps[idx_x_min:idx_x_max] .+= 1e-3 #estimated_workload_factor / 1e9
-        end
-
-        l_x_simps .= 1.
+                if load_balancer == workload
+                    aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
+                    # Obtained through linear regression on benchmark data
+                    estimated_workload_factor = 17139 * aabb_volume + 12458
+                    l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e9 # prevent numerical inaccuracies by downscaling the values
+                elseif load_balancer == count
+                    l_x_simps[idx_x_min:idx_x_max] .+= 1e-3
+                end
+            end # for
+        else
+            l_x_simps .= 1.
+        end # if load_balancer != naive
 
         l_bin_start_idxs = Array{Int, 1}(undef, n_threads)
         n_opt_simps_per_p_bin = sum(l_x_simps) / n_threads
         l_bin_start_idxs[1] = 1
 
+        println(n_opt_simps_per_p_bin)
+
         next_x_idx = 1
         for bin_id ∈ 1:(n_threads-1)
-            current_simp_count = 0
-            new_simp_count = 0
+            current_simp_count = 0.
+            new_simp_count = 0.
             while (n_opt_simps_per_p_bin - current_simp_count > new_simp_count - n_opt_simps_per_p_bin) && next_x_idx <= n_samples_x
                 current_simp_count = new_simp_count
                 new_simp_count = current_simp_count + l_x_simps[next_x_idx]
@@ -380,6 +398,7 @@ module Rasterization
                 print_progress = true)
 
             println("Done.")
+            exit(0) #benchmarking
 
             if kajiura
                 for t ∈ 1:n_times
@@ -673,7 +692,7 @@ module Rasterization
         end # for tet_id
 
         thread_time = time_ns() - thread_time_start
-        open("time-$bin_id.csv", "w+") do fi
+        open("time-$(debug_load_balancer == naive ? "naive" : debug_load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
             println(fi, thread_time, ';', n_bin_rasterized)
         end
     end

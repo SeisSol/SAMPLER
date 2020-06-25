@@ -126,9 +126,16 @@ module Args
             #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean floor. \n
             #                    \t Examples: W; UVW"""
             #    default = "W"
+            "--load-balancer"
+                help = """The static load balancer to choose when assigning simplices to threads. Options are:\n
+                                \t naive: Every thread works on a bin that is |D| / n_threads in size\n
+                                \t count: Every thread works on a bin that approximately contains n_simplices / n_threads simplices\n
+                                \t workload: Every thread has roughly the same ESTIMATED (!) workload (read: processing time) in its bin
+                                """
+                default="workload"
             "--kajiura"
-                help = "Apply the Kajiura filter to the bottom displacement to get the surface displacement.
-                                \t Only applies to 2D input files where only bottom displacement is available."
+                help = """Apply the Kajiura filter to the bottom displacement to get the surface displacement.\n
+                                \t Only applies to 2D input files where only bottom displacement is available."""
                 action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."
@@ -146,6 +153,10 @@ module Args
 
     function validate_args!(args::Dict)
         args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
+
+        if !(args["load-balancer"] in ["naive", "count", "workload"])
+            throw(ArgumentError("Load Balancer '$(args["load-balancer"])' does not exist!"))
+        end
         #args["vars-3d"]      = [x for x ∈ split(args["vars-3d"],      "") if x != ""]
         #args["vars-surface"] = [x for x ∈ split(args["vars-surface"], "") if x != ""]
         #args["vars-floor"]   = [x for x ∈ split(args["vars-floor"],   "") if x != ""]

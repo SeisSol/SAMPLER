@@ -3,4 +3,6 @@
 *.perf
 *.nc
 *.pvsm
+*.csv
+*.txt
 profile.txt
