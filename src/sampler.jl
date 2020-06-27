@@ -60,47 +60,73 @@ function main()
         timestep_end -= 1
     end
 
+    lb_autotune = ARGS["lb-autotune"]
+
     load_balancer = ARGS["load-balancer"]
-    if load_balancer == "naive"
+    lb_params = (0., 0.)
+
+    if lb_autotune
+        if !has_3d
+            println("The workload-LB currently can only be autotuned on tetrahedra. Please supply a 3D mesh also.")
+            exit(1)
+        end
+
+        println("Performing LB-autotune.")
+
+        load_balancer = Main.Rasterization.naive
+    elseif load_balancer == "naive"
         load_balancer = Main.Rasterization.naive
     elseif load_balancer == "count"
         load_balancer = Main.Rasterization.count
     else
         load_balancer = Main.Rasterization.workload
+
+        if isfile("sampler_lb_params.txt")
+            str_params = readline("sampler_lb_params.txt")
+            ls_params = split(str_params, ';')
+            lb_params = (parse(Float64, ls_params[1]), parse(Float64, ls_params[2]))
+        else
+            println("To use the workload-LB, please run first with your scenario settings and --lb-autotune")
+            println("Using fallback (naive) LB instead!")
+            load_balancer = Main.rasterization.naive
+        end
     end
 
     # Delete output file if it already exists
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
 
-    #============================================#
-    # Process 2D seafloor
-    #============================================#
+    if !lb_autotune
+        #============================================#
+        # Process 2D seafloor
+        #============================================#
 
-    triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
+        triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
 
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
-                            times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                            z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura, 
-                            t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
-
-    GC.gc(true)
-
-    #============================================#
-    # Process 2D sea surface
-    #============================================#
-
-    if !has_kajiura
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                z_range=Rasterization.z_surface, 
-                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
+                                z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura, 
+                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
+                                lb_params=lb_params)
+
+        GC.gc(true)
+
+        #============================================#
+        # Process 2D sea surface
+        #============================================#
+
+        if !has_kajiura
+            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+                                    times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                                    z_range=Rasterization.z_surface, 
+                                    t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, lb_params=lb_params)
+        end
+
+
+        triangles = nothing
+        points_2d = nothing
+        GC.gc(true)
     end
-
-
-    triangles = nothing
-    points_2d = nothing
-    GC.gc(true)
 
     #============================================#
     # Process 3D mesh
@@ -110,8 +136,9 @@ function main()
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
-                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer)
+                                times, sampling_rate, out_filename, ARGS["memory-limit"], create_file=lb_autotune,
+                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
+                                lb_params=lb_params, lb_autotune=lb_autotune)
     end
 end
 

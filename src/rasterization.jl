@@ -35,7 +35,9 @@ module Rasterization
         t_end           :: Integer = length(times), 
         create_file     :: Bool = false, 
         kajiura         :: Bool = false, 
-        load_balancer   :: LoadBalancer = workload) where INDEX_TYPE <: Integer
+        load_balancer   :: LoadBalancer = workload,
+        lb_params       :: NTuple{2, Float64} = (0., 0.),
+        lb_autotune     :: Bool = false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -103,7 +105,9 @@ module Rasterization
         b_mem_points                    = sizeof(Float64) * 3 * size(points, 2)
         b_mem_simps                     = sizeof(Int32) * size(simplices, 1) * size(simplices, 2)
         b_mem_cnt                       = sizeof(UInt16)  * n_samples_x * n_samples_y
-        b_mem_misc                      = 4 * 1024^2 * n_threads # 4MiB per thread
+        b_mem_misc                      = 256 * 1024^2 * n_threads # 256 MiB per thread
+        b_mem_misc += n_samples_x * sizeof(Float64)
+        b_mem_misc += n_simplices * sizeof(UInt16)
         b_mem_per_out_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
         b_mem_per_in_var_and_timestep   = sizeof(Float64) * n_simplices
 
@@ -125,7 +129,7 @@ module Rasterization
         n_timesteps                 = t_end - t_begin + 1
         n_timesteps_per_iteration   = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep) 
             ÷ (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
-            
+
         n_iterations                = ceil(Int, n_timesteps / n_timesteps_per_iteration)
         
         n_total_problems            = n_timesteps * n_simplices
@@ -174,7 +178,7 @@ module Rasterization
                 if load_balancer == workload
                     aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
                     # Obtained through linear regression on benchmark data
-                    estimated_workload_factor = 1.7139 * aabb_volume + 1.2458
+                    estimated_workload_factor = lb_params[1] + lb_params[2] * aabb_volume
                     l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e6 # prevent numerical inaccuracies by downscaling the values
                 elseif load_balancer == count
                     l_x_simps[idx_x_min:idx_x_max] .+= 1e-3
@@ -359,6 +363,11 @@ module Rasterization
             # that overlapped more than 2 adjacent bins.
             #============================================#
 
+            l_tet_autotune_values :: Union{Nothing, Array{Int, 2}} = nothing
+            if lb_autotune
+                l_tet_autotune_values = Array{Int, 2}(-1, (2, n_simplices))
+            end
+
             Threads.@threads for thread_id ∈ 1:n_threads
                 iterate_tets!(
                     thread_id,         l_bin_ids,    l_bin_counts,
@@ -368,7 +377,7 @@ module Rasterization
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    print_progress = (thread_id == n_threads ÷ 2))
+                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -384,7 +393,7 @@ module Rasterization
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    print_progress = (thread_id == n_threads ÷ 2))
+                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
             end # for thread_id
 
             # Lastly, the tets that overlapped multiple bins (practically never occurs!)
@@ -396,14 +405,27 @@ module Rasterization
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
                 l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                print_progress = true)
+                print_progress = true, lb_autotune=l_tet_autotune_values)
 
             println("Done.")
+
+            if lb_autotune
+                lb_params = [ones(n_simplices) l_tet_autotune_values[:, 1]] \ l_tet_autotune_values[:, 2]
+                println("==========================================")
+                println("  workload-LB params: a = $(lb_params[1]), b = $(lb_params[2])")
+                println("==========================================")
+
+                write("sampler_lb_params.txt", string(lb_params[1]), ';', string(lb_params[2]))
+
+                println()
+                println("LB-params written to file, will use them automatically from now on when --load-balancer=workload is specified.")
+                exit(0)
+            end
 
             if kajiura
                 for t ∈ 1:n_times
                     l_dyn_output_grids[2][:, :, t] .= 0.
-                    apply_kajiura!(l_stat_output_grids[1], l_dyn_output_grids[1][:, :, t], view(l_dyn_output_grids[2], :, :, t),
+                    Main.Kajiura.apply_kajiura!(l_stat_output_grids[1], l_dyn_output_grids[1][:, :, t], view(l_dyn_output_grids[2], :, :, t),
                                    i_domain_z[1], i_domain_z[2], sampling_rate[1], sampling_rate[2], water_level=2000.)
                 end
             end
@@ -440,7 +462,7 @@ module Rasterization
         n_samples_x,      n_samples_y,  n_samples_z,
         v_sampling_rate,  t_start,      n_times,
         l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
-        n_simplex_points, z_range;      print_progress=false)
+        n_simplex_points, z_range;      print_progress=false, lb_autotune :: Union{Nothing, Array{Int, 2}} = nothing)
 
         m43_tet_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
@@ -485,6 +507,8 @@ module Rasterization
                 end
             end # if print_progress
 
+            timeit_t_start = time_ns()
+
             l_tetrahedron = (@view l_tetrahedra[:, tet_id])
             for i ∈ 1:n_simplex_points, dim ∈ 1:3
                 m43_tet_points[i, dim] = l_points[dim, l_tetrahedron[i]]
@@ -514,6 +538,7 @@ module Rasterization
 
             n_current_cells_x = idx_g_x_max - idx_g_x_min + 1
             n_current_cells_y = idx_g_y_max - idx_g_y_min + 1
+            n_current_cells_z = idx_g_z_max - idx_g_z_min + 1
 
             # If the current tet has a bounding box larger than anticipated, enlarge the sample counts array accordingly
             # By allocating double the size of the bounding box, future tets that are just a bit larger than the current one
@@ -687,6 +712,14 @@ module Rasterization
             end # if z_range
 
             n_bin_rasterized += 1
+            if !isnothing(lb_autotune)
+                timeit_time = time_ns() - timeit_t_start
+
+                lb_autotune[1, tet_id] = n_current_cells_x * n_current_cells_y * n_current_cells_z
+                lb_autotune[2, tet_id] = timeit_time
+
+                if n_simplex_points == 4; lb_autotune[1, tet_id] *= n_current_cells_z; end
+            end
         end # for tet_id
     end
 
