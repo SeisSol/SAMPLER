@@ -77,7 +77,7 @@ function main()
     # Process 2D seafloor
     #============================================#
 
-    #=triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
+    triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
 
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                             times, sampling_rate, out_filename, ARGS["memory-limit"], 
@@ -100,7 +100,7 @@ function main()
 
     triangles = nothing
     points_2d = nothing
-    GC.gc(true)=#
+    GC.gc(true)
 
     #============================================#
     # Process 3D mesh

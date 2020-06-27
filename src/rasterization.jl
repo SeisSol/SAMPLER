@@ -93,12 +93,21 @@ module Rasterization
         # Calculate problem size & hardware limitations
         #============================================#
 
-        n_threads                   = nthreads()
+        n_threads                       = nthreads()
 
-        b_mem_per_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
-        b_mem_static                = sizeof(UInt16)  * n_samples_x * n_samples_y + 1024^2*n_threads
+        n_simplex_points                = size(simplices, 1)
+        n_dims                          = n_simplex_points - 1
+        n_simplices                     = size(simplices, 2)
+        n_simplices_per_thread          = n_simplices / n_threads
 
-        n_in_vars                   = length(in_var_names)
+        b_mem_points                    = sizeof(Float64) * 3 * size(points, 2)
+        b_mem_simps                     = sizeof(Int32) * size(simplices, 1) * size(simplices, 2)
+        b_mem_cnt                       = sizeof(UInt16)  * n_samples_x * n_samples_y
+        b_mem_misc                      = 4 * 1024^2 * n_threads # 4MiB per thread
+        b_mem_per_out_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
+        b_mem_per_in_var_and_timestep   = sizeof(Float64) * n_simplices
+
+        n_in_vars                       = length(in_var_names)
 
         # u, v for 3d; η for surface; d for seafloor
         out_vars_dyn = 
@@ -114,13 +123,11 @@ module Rasterization
         n_out_vars_stat             = length(out_vars_stat)
 
         n_timesteps                 = t_end - t_begin + 1
-        n_timesteps_per_iteration   = (mem_limit - b_mem_static) ÷ (n_in_vars * b_mem_per_var_and_timestep)
+        n_timesteps_per_iteration   = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep) 
+            ÷ (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
+            
         n_iterations                = ceil(Int, n_timesteps / n_timesteps_per_iteration)
         
-        n_simplex_points            = size(simplices, 1)
-        n_dims                      = n_simplex_points - 1
-        n_simplices                 = size(simplices, 2)
-        n_simplices_per_thread      = n_simplices / n_threads
         n_total_problems            = n_timesteps * n_simplices
 
         s_simplex_name              = n_dims == 3 ? "tetrahedron" : "triangle"
@@ -167,8 +174,8 @@ module Rasterization
                 if load_balancer == workload
                     aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
                     # Obtained through linear regression on benchmark data
-                    estimated_workload_factor = 17139 * aabb_volume + 12458
-                    l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e9 # prevent numerical inaccuracies by downscaling the values
+                    estimated_workload_factor = 1.7139 * aabb_volume + 1.2458
+                    l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e6 # prevent numerical inaccuracies by downscaling the values
                 elseif load_balancer == count
                     l_x_simps[idx_x_min:idx_x_max] .+= 1e-3
                 end
@@ -180,8 +187,6 @@ module Rasterization
         l_bin_start_idxs = Array{Int, 1}(undef, n_threads)
         n_opt_simps_per_p_bin = sum(l_x_simps) / n_threads
         l_bin_start_idxs[1] = 1
-
-        println(n_opt_simps_per_p_bin)
 
         next_x_idx = 1
         for bin_id ∈ 1:(n_threads-1)
@@ -270,15 +275,15 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        nc = nothing
-            #if create_file 
-            #    Main.Util.get_or_create_netcdf(out_filename; create=true,
-            #                                   x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-            #                                   y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-            #                                   t_vals=times[t_begin:t_end])
-            #else
-            #    Main.Util.get_or_create_netcdf(out_filename)
-            #end
+        nc =
+            if create_file 
+                Main.Util.get_or_create_netcdf(out_filename; create=true,
+                                               x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+                                               y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+                                               t_vals=times[t_begin:t_end])
+            else
+                Main.Util.get_or_create_netcdf(out_filename)
+            end
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
@@ -363,7 +368,7 @@ module Rasterization
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    print_progress = (thread_id == n_threads ÷ 2), load_balancer=load_balancer)
+                    print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -379,7 +384,7 @@ module Rasterization
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    print_progress = (thread_id == n_threads ÷ 2), load_balancer=load_balancer)
+                    print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             # Lastly, the tets that overlapped multiple bins (practically never occurs!)
@@ -391,10 +396,9 @@ module Rasterization
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
                 l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                print_progress = true, load_balancer=load_balancer)
+                print_progress = true)
 
             println("Done.")
-            exit(0) #benchmarking
 
             if kajiura
                 for t ∈ 1:n_times
@@ -436,11 +440,7 @@ module Rasterization
         n_samples_x,      n_samples_y,  n_samples_z,
         v_sampling_rate,  t_start,      n_times,
         l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
-        n_simplex_points, z_range;      print_progress=false, load_balancer=nothing)
-
-        if isnothing(load_balancer)
-            exit(69)
-        end
+        n_simplex_points, z_range;      print_progress=false)
 
         m43_tet_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
@@ -457,15 +457,13 @@ module Rasterization
         n_bin_rasterized    = 0
         n_bin_total         = l_bin_counts[bin_id]
 
-        thread_time_start = time_ns()
-
         for tet_id ∈ 1:n_tetrahedra
             # Only process tetrahedra in thread's own bin
             if l_bin_ids[tet_id] != bin_id
                 continue
             end
 
-            if print_progress && false
+            if print_progress
                 d_now = now()
 
                 if (d_now - d_last_printed) >= print_interval && n_bin_rasterized > 0
@@ -690,11 +688,6 @@ module Rasterization
 
             n_bin_rasterized += 1
         end # for tet_id
-
-        thread_time = time_ns() - thread_time_start
-        open("time-$(load_balancer == naive ? "naive" : load_balancer == count ? "count" : "workload")-$(nthreads())-$bin_id.csv", "w+") do fi
-            println(fi, thread_time, ';', n_bin_rasterized)
-        end
     end
 
     @inline function cross3!(a, b, ret)
