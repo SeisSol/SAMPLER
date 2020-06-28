@@ -365,7 +365,7 @@ module Rasterization
 
             l_tet_autotune_values :: Union{Nothing, Array{Int, 2}} = nothing
             if lb_autotune
-                l_tet_autotune_values = Array{Int, 2}(-1, (2, n_simplices))
+                l_tet_autotune_values = fill(-1, (n_simplices, 2))
             end
 
             Threads.@threads for thread_id ∈ 1:n_threads
@@ -715,10 +715,10 @@ module Rasterization
             if !isnothing(lb_autotune)
                 timeit_time = time_ns() - timeit_t_start
 
-                lb_autotune[1, tet_id] = n_current_cells_x * n_current_cells_y * n_current_cells_z
-                lb_autotune[2, tet_id] = timeit_time
+                lb_autotune[tet_id, 1] = n_current_cells_x * n_current_cells_y * n_current_cells_z
+                lb_autotune[tet_id, 2] = timeit_time
 
-                if n_simplex_points == 4; lb_autotune[1, tet_id] *= n_current_cells_z; end
+                if n_simplex_points == 4; lb_autotune[tet_id, 1] *= n_current_cells_z; end
             end
         end # for tet_id
     end
