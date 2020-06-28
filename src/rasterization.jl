@@ -279,15 +279,16 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        nc =
-            if create_file 
-                Main.Util.get_or_create_netcdf(out_filename; create=true,
-                                               x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-                                               y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                               t_vals=times[t_begin:t_end])
-            else
-                Main.Util.get_or_create_netcdf(out_filename)
-            end
+        nc = nothing
+            #if create_file 
+            #    Main.Util.get_or_create_netcdf(out_filename; create=true,
+            #                                   x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+            #                                   y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+            #                                   t_vals=times[t_begin:t_end])
+            #else
+            #    Main.Util.get_or_create_netcdf(out_filename)
+            #end
+        # TODO: close nc file again right away
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
@@ -408,6 +409,7 @@ module Rasterization
                 print_progress = true, lb_autotune=l_tet_autotune_values)
 
             println("Done.")
+            exit(0) #benchmarking
 
             if lb_autotune
                 lb_params = [ones(n_simplices) l_tet_autotune_values[:, 1]] \ l_tet_autotune_values[:, 2]
@@ -479,13 +481,15 @@ module Rasterization
         n_bin_rasterized    = 0
         n_bin_total         = l_bin_counts[bin_id]
 
+        thread_start_time = time_ns()
+
         for tet_id ∈ 1:n_tetrahedra
             # Only process tetrahedra in thread's own bin
             if l_bin_ids[tet_id] != bin_id
                 continue
             end
 
-            if print_progress
+            if print_progress && false
                 d_now = now()
 
                 if (d_now - d_last_printed) >= print_interval && n_bin_rasterized > 0
@@ -721,6 +725,12 @@ module Rasterization
                 if n_simplex_points == 4; lb_autotune[tet_id, 1] *= n_current_cells_z; end
             end
         end # for tet_id
+
+        thread_time = time_ns() - thread_start_time
+        open("time-workload-$(nthreads())-$bin_id.csv", "w+") do fi
+            println(fi, thread_time, ';', n_bin_rasterized)
+        end
+
     end
 
     @inline function cross3!(a, b, ret)
