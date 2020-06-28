@@ -105,7 +105,7 @@ module Rasterization
         b_mem_points                    = sizeof(Float64) * 3 * size(points, 2)
         b_mem_simps                     = sizeof(Int32) * size(simplices, 1) * size(simplices, 2)
         b_mem_cnt                       = sizeof(UInt16)  * n_samples_x * n_samples_y
-        b_mem_misc                      = 256 * 1024^2 * n_threads # 256 MiB per thread
+        b_mem_misc                      = 16 * 1024^2 * n_threads # 16 MiB per thread
         b_mem_misc += n_samples_x * sizeof(Float64)
         b_mem_misc += n_simplices * sizeof(UInt16)
         b_mem_per_out_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
@@ -129,6 +129,7 @@ module Rasterization
         n_timesteps                 = t_end - t_begin + 1
         n_timesteps_per_iteration   = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep) 
             ÷ (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
+        n_timesteps_per_iteration   = max(1, n_timesteps_per_iteration) # Process at least 1 timestep
 
         n_iterations                = ceil(Int, n_timesteps / n_timesteps_per_iteration)
         
