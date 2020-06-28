@@ -172,12 +172,16 @@ module Rasterization
 
                 idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
                 idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
+                idx_y_min = floor(Int, (y_min - i_domain_y[1]) / sampling_rate[2]) + 1
+                idx_y_max = floor(Int, (y_max - i_domain_y[1]) / sampling_rate[2]) + 1
+                idx_z_min = floor(Int, (z_min - i_domain_z[1]) / sampling_rate[3]) + 1
+                idx_z_max = floor(Int, (z_max - i_domain_z[1]) / sampling_rate[3]) + 1
 
                 idx_x_min = max(1, min(idx_x_min, n_samples_x))
                 idx_x_max = max(1, min(idx_x_max, n_samples_x))
 
                 if load_balancer == workload
-                    aabb_volume = (x_max - x_min) * (y_max - y_min) * (z_max - z_min)
+                    aabb_volume = (idx_x_min - idx_x_min + 1) * (idx_y_max - y_min + 1) * (idx_z_max - idx_z_min + 1)
                     # Obtained through linear regression on benchmark data
                     estimated_workload_factor = lb_params[1] + lb_params[2] * aabb_volume
                     l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e6 # prevent numerical inaccuracies by downscaling the values
