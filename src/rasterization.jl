@@ -237,6 +237,12 @@ module Rasterization
                         l_bin_ids[tet_id] = n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
+                else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
+                    coord_z_min = minimum(m43_tet_points[:, 3])
+                    if coord_z_min < 0.
+                        l_bin_ids[tet_id] = n_threads * 2 + 1 # Unused bin, will be ignored later
+                        continue
+                    end
                 end
 
                 coord_x_min = minimum(m43_tet_points[:, 1])
@@ -293,7 +299,7 @@ module Rasterization
             else
                 Main.Util.get_or_create_netcdf(out_filename)
             end
-        NetCDF.close(nc) # Will be opened again later
+        nc = nothing # Close file; will be opened again later
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
@@ -416,6 +422,12 @@ module Rasterization
             println("Done.")
 
             if lb_autotune
+                open("linload.csv", "w+") do fp
+                    println("aabbVol;aabbTime")
+                    for i in 1:size(l_tet_autotune_values, 1)
+                        println(fp, l_tet_autotune_values[i, 1], ';', l_tet_autotune_values[i, 2])
+                    end
+                end
                 lb_params = [ones(n_simplices) l_tet_autotune_values[:, 1]] \ l_tet_autotune_values[:, 2]
                 println("==========================================")
                 println("  workload-LB params: a = $(lb_params[1]), b = $(lb_params[2])")
