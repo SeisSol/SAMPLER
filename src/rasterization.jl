@@ -239,7 +239,8 @@ module Rasterization
                     end
                 else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
                     coord_z_min = minimum(m43_tet_points[:, 3])
-                    if coord_z_min < 0.
+                    coord_z_max = maximum(m43_tet_points[:, 3])
+                    if coord_z_max <= 0.00001
                         l_bin_ids[tet_id] = n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
