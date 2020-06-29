@@ -8,7 +8,7 @@ main:
 include("util.jl")
 include("args.jl")
 include("xdmf.jl")
-include("kajiura.jl")
+#include("kajiura.jl")
 include("rasterization.jl")
 
 using Base.Threads
@@ -96,7 +96,7 @@ function main()
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
 
-    if !lb_autotune && false #benchmarking
+    if !lb_autotune
         #============================================#
         # Process 2D seafloor
         #============================================#

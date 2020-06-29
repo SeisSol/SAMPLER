@@ -132,7 +132,7 @@ module Args
                                 \t count: Every thread works on a bin that approximately contains n_simplices / n_threads simplices\n
                                 \t workload: Every thread has roughly the same ESTIMATED (!) workload (read: processing time) in its bin. Run with --lb-autotune first.
                                 """
-                default="workload"
+                default="naive"
             "--lb-autotune"
                 help = """Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
                     The found parameters will be saved automatically and the workload-LB can then be used."""
