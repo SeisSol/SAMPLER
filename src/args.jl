@@ -109,6 +109,10 @@ module Args
                                 \t Examples: 100; 50,70,80"""
                 arg_type = NTuple{3, Float64}
                 default = (100., 100., 100.)
+            "--water-height"
+                help = """Some bathymetry grids place the seafloor at z = 0. Set the water height such that it matches the sea surface's z-coordinate."""
+                arg_type = Float64
+                default = 0.
             "--memory-limit", "-m"
                 help = """The maximum amount of RAM the script should use. This is only a SOFT limit!\n
                                 \t Examples: 8G; 2T; 512M\n

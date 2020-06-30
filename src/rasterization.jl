@@ -37,7 +37,8 @@ module Rasterization
         kajiura         :: Bool = false, 
         load_balancer   :: LoadBalancer = workload,
         lb_params       :: NTuple{2, Float64} = (0., 0.),
-        lb_autotune     :: Bool = false) where INDEX_TYPE <: Integer
+        lb_autotune     :: Bool = false,
+        water_height    :: Float64 = 0.) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -464,6 +465,9 @@ module Rasterization
 
             if iteration == 1
                 for var ∈ out_vars_stat
+                    if var.name == "b"
+                        l_stat_output_grids[var.id] .-= water_height
+                    end
                     ncwrite(l_stat_output_grids[var.id], out_filename, var.name, start=[1, 1], count=[-1, -1])
                 end
             end

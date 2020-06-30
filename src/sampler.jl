@@ -92,6 +92,8 @@ function main()
         end
     end
 
+    water_height = ARGS["water-height"]
+
     # Delete output file if it already exists
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
@@ -107,7 +109,7 @@ function main()
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                 z_range=Rasterization.z_floor, create_file=true, kajiura=has_kajiura, 
                                 t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                lb_params=lb_params)
+                                lb_params=lb_params, water_height=water_height)
 
         GC.gc(true)
 
@@ -119,7 +121,8 @@ function main()
             Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                                     times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                     z_range=Rasterization.z_surface, 
-                                    t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, lb_params=lb_params)
+                                    t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
+                                    lb_params=lb_params, water_height=water_height)
         end
 
 
@@ -138,7 +141,7 @@ function main()
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], create_file=lb_autotune,
                                 t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                lb_params=lb_params, lb_autotune=lb_autotune)
+                                lb_params=lb_params, lb_autotune=lb_autotune, water_height=water_height)
     end
 end
 
