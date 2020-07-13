@@ -16,7 +16,7 @@ const G = begin
 
     function Σ(r::Float64)
         Σ = 0.
-        for n ∈ 100:-1:0
+        for n ∈ 10000:-1:0
             frac = (2n + 1) / ((2n + 1)^2 + r^2)^1.5
             if n & 0x1 != 0 # n is odd, subtract
                 Σ -= frac
@@ -34,10 +34,10 @@ const G = begin
     extrapolate(scale(itp, l_r), Flat())
 end
 
-function precalculate_σ(h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; n_h :: Float64 = 5.)
+function precalculate_σ(h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; n_h :: Float64 = 20.)
     Δh = (h_max - h_min) / 10
     if Δh == 0.; Δh = 1.; end
-    l_h = h_min:Δh:(h_max + Δh)
+    l_h = max(0.0001, h_min):Δh:(h_max + Δh)
 
     #                       h^2
     # σ = ———————————————————————————————————————
@@ -85,7 +85,7 @@ function precalculate_σ(h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy
 end
 
 function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 2}, η::AbstractArray{Float64, 2}, 
-                h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; water_level :: Float64 = 0., n_h :: Float64 = 5., 
+                h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; water_level :: Float64 = 0., n_h :: Float64 = 20., 
                 σ = precalculate_σ(h_min, h_max, Δx, Δy; n_h=n_h))
     
     filter_nx_half = ceil(Int, n_h * h_max / Δx / 2)
@@ -109,8 +109,14 @@ function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 
     println("  Computing displacement matrix...")
     Threads.@threads for x ∈ 1:size(η, 2)
         for y ∈ 1:size(η, 1)
-            h_yx = water_level - b[y, x]
-            η[y, x] = σ(h_yx) * Δx * Δy / h_yx^2 * d[y, x]
+            h_yx = max(0., water_level - b[y, x]) # height 0 on land
+
+            η[y, x] = 
+                if h_yx != 0.
+                    σ(h_yx) * Δx * Δy / h_yx^2 * d[y, x]
+                else
+                    0. # No displacement where no water is (Kajiura not applicable)
+                end
         end
     end
 
@@ -126,13 +132,11 @@ function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 
     println("  Computing IFFT...")
     η_complex = reinterpret(Float64, ifft(Η))
     copyto!(η, @view η_complex[1:2:end-1])
-
-    println("  Done!")
 end
 
 function main()
-    if length(ARGS) != 2
-        println("Usage: julia ./kajiura.jl <in_file.nc> <out_file.nc>")
+    if length(ARGS) != 3
+        println("Usage: julia ./kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>")
         exit(0)
     end
 
@@ -140,6 +144,7 @@ function main()
 
     in_filename = ARGS[1]
     out_filename = ARGS[2]
+    t_end = parse(Int, ARGS[3])
     nc = NetCDF.open(in_filename, mode=NC_NOWRITE)
     d = nc["d"]
 
@@ -156,35 +161,42 @@ function main()
     n_times = length(l_times)
     last_timestamp = l_times[end]
 
-    println("Processing $nx × $ny cells over $n_times timesteps.")
+    if t_end == -1 || t_end > n_times - 1
+	    t_end = n_times - 1
+    end
+
+    println("Processing $nx × $ny cells over $(t_end + 1) timesteps.")
 
     b = Array{Float64, 2}(undef, (ny, nx))
     ncread!(in_filename, "b", b)
     current_disp = zeros(ny, nx)
-    current_η = zeros(ny, nx)
+    current_η_diff = Array{Float64, 2}(undef, (ny, nx))
+    current_d_diff = Array{Float64, 2}(undef, (ny, nx))
 
     println("Creating output file")
 
     isfile(out_filename) && rm(out_filename)    
-    nccreate(out_filename, "h", "y", ly, "x", lx)
-    buffer_η = Array{Float64, 2}(undef, (ny, nx))
+    timeatts = Dict("units" => "seconds")
+    xatts = Dict("units" => "m")
+    yatts = Dict("units" => "m")
 
-    for t in 1:n_times
-        println("Working on timestep $t of $n_times")
-        buffer_η .* 0.
-        apply_kajiura!(b .+ current_disp, d[:,:,t] .- current_disp, buffer_η, -minimum(b), -maximum(b), Δx, Δy)
-        current_disp = d[:,:,t]
-        current_η .+= buffer_η
-    end
-
-    println("Writing outputs...")
+    nccreate(out_filename, "eta_diff", "y", ly, yatts, "x", lx, xatts, "time", l_times[1:t_end+1], timeatts)
+    nccreate(out_filename, "d_diff", "y", "x", "time")
 
     nccreate(out_filename, "b", "y", "x")
-    nccreate(out_filename, "d", "y", "x")
+    ncwrite(b, out_filename, "b")
 
-    ncwrite(b .+ current_disp, out_filename, "b")
-    ncwrite(zeros(Float64, (ny, nx)), out_filename, "d")
-    ncwrite(current_η, out_filename, "h")
+    for t in 1:t_end + 1
+        println("Working on timestep $(t - 1) of $(t_end)")
+        current_η_diff .= 0.
+        current_d_diff .= d[:,:,t] .- current_disp
+        apply_kajiura!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy)
+        current_disp = d[:,:,t]
+
+        println("  Writing output for timestep")
+        ncwrite(current_d_diff, out_filename, "d_diff", start=[1,1,t], count=[-1,-1,1])
+        ncwrite(current_η_diff, out_filename, "eta_diff", start=[1,1,t], count=[-1,-1,1])
+    end
 
     println("Done.")
 end
