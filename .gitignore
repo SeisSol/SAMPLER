@@ -5,4 +5,5 @@
 *.pvsm
 *.csv
 *.txt
+*.out
 profile.txt
