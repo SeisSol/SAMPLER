@@ -118,32 +118,19 @@ module Args
                                 \t Examples: 8G; 2T; 512M\n
                                 \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
                 default = "8G"
-            #"--vars-3d", "-v"
-            #    help = """The variables from the 3D SeisSol output that the script shall process. \n
-            #                    \t Examples: uvw; u; uv"""
-            #    default = "uv"
-            #"--vars-surface", "-s"
-            #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean surface. \n
-            #                    \t Examples: W"""
-            #    default = "W"
-            #"--vars-floor", "-f"
-            #    help = """The variables from the 2D SeisSol output that the script shall process on the ocean floor. \n
-            #                    \t Examples: W; UVW"""
-            #    default = "W"
             "--load-balancer"
                 help = """The static load balancer to choose when assigning simplices to threads. Options are:\n
                                 \t naive: Every thread works on a bin that is |D| / n_threads in size\n
-                                \t count: Every thread works on a bin that approximately contains n_simplices / n_threads simplices\n
-                                \t workload: Every thread has roughly the same ESTIMATED (!) workload (read: processing time) in its bin. Run with --lb-autotune first.
+                                \t [DO NOT USE] count: Every thread works on a bin that approximately contains n_simplices / n_threads simplices\n
+                                \t [DO NOT USE] workload: Every thread has roughly the same ESTIMATED (!) workload (read: processing time) in its bin. Run with --lb-autotune first.
                                 """
                 default="naive"
             "--lb-autotune"
-                help = """Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
+                help = """[DO NOT USE] Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
                     The found parameters will be saved automatically and the workload-LB can then be used."""
                 action = :store_true
             "--kajiura"
-                help = """Apply the Kajiura filter to the bottom displacement to get the surface displacement.\n
-                                \t Only applies to 2D input files where only bottom displacement is available."""
+                help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
                 action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."
@@ -165,12 +152,7 @@ module Args
         if !(args["load-balancer"] in ["naive", "count", "workload"])
             throw(ArgumentError("Load Balancer '$(args["load-balancer"])' does not exist!"))
         end
-        #args["vars-3d"]      = [x for x ∈ split(args["vars-3d"],      "") if x != ""]
-        #args["vars-surface"] = [x for x ∈ split(args["vars-surface"], "") if x != ""]
-        #args["vars-floor"]   = [x for x ∈ split(args["vars-floor"],   "") if x != ""]
-
-
-
+        
         return args
     end
 end

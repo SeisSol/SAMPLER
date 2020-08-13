@@ -7,9 +7,6 @@
 #SBATCH --partition=cm2_tiny
 #SBATCH --nodes=1-1
 #SBATCH --cpus-per-task=28
-# 56 is the maximum reasonable value for CooLMUC-2
-#SBATCH --mail-type=all
-#SBATCH --mail-user=m.schmeller@tum.de
 #SBATCH --export=NONE
 #SBATCH --time=02:00:00
 module load slurm_setup

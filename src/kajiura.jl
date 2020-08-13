@@ -1,3 +1,9 @@
+#=
+- Julia version: 1.4.0
+- Author: Maximilian Schmeller
+- Date: 2020-07-13
+=#
+
 using Interpolations
 using Base.Threads
 using Printf
@@ -10,9 +16,9 @@ const G = begin
     # G(r) ≈ 1/π * Σ ——————————————————————————
     #             n=0 [(2n + 1)^2 + r^2]^(3/2)
     #
-    # r ∈ [0; √(50)]
+    # r ∈ [0; √(800)]
     Δr = .01
-    l_r = 0:Δr:(sqrt(50) + Δr)
+    l_r = 0:Δr:(sqrt(800) + Δr)
 
     function Σ(r::Float64)
         Σ = 0.
@@ -137,7 +143,7 @@ end
 function main()
     if length(ARGS) != 3
         println("Usage: julia ./kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>")
-        exit(0)
+        return
     end
 
     println("Using $(nthreads()) threads.")
