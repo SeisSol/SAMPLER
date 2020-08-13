@@ -65,10 +65,14 @@ Note: You can also rasterize the SeisSol outputs fully (without `--kajiura`) and
 
 ### Rasterize fully (with 3D velocity grid)
 
-    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --kajiura ~/seissol-outputs/out-surface.xdmf
+    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -t 300 ~/seissol-outputs/out-surface.xdmf
+
+Rasterizes all grids and variables needed for tsunami simulation, including the 3D velocity grid.
+Only rasterizes timestep 300 (for example).
 
 ## Using the outputs with sam(oa)²
 You need the [max-bachelor][6] branch of sam(oa)² in order to seamlessly use the output files of SAMPLER.
+The other versions of sam(oa)² cannot handle multiple variables in one input file yet.
 Refer to its README.md for mor information.
 
 ## Known Issues
