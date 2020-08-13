@@ -334,12 +334,12 @@ module Rasterization
 
         if !lb_autotune # LB-autotune does not write outputs
             if create_file 
-                Main.Util.get_or_create_netcdf(out_filename; create=true,
-                                                x_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-                                                y_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+                Main.NC.get_or_create_netcdf(out_filename; create=true,
+                                                y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+                                                x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
                                                 t_vals=times[t_begin:t_end])
             else
-                Main.Util.get_or_create_netcdf(out_filename)
+                Main.NC.get_or_create_netcdf(out_filename)
             end
         end
 
@@ -350,18 +350,18 @@ module Rasterization
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
         for var ∈ out_vars_dyn
-            l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_y, n_samples_x, n_timesteps_per_iteration))
+            l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_x, n_samples_y, n_timesteps_per_iteration))
         end
 
         l_stat_output_grids = Array{Array{Float64, 2}, 1}(undef, n_out_vars_stat)
         for var ∈ out_vars_stat
-            l_stat_output_grids[var.id] = Array{Float64, 2}(undef, (n_samples_y, n_samples_x))
+            l_stat_output_grids[var.id] = Array{Float64, 2}(undef, (n_samples_x, n_samples_y))
         end
 
         # This matrix counts the total number of samples in each output grid cell
         # (read: the total number of sampled points in z-direction for each xy-index of the output grids)
         # This stays constant across all vars and timesteps because the grid geometry is constant.
-        myx_output_sample_counts = Array{UInt16, 2}(undef, (n_samples_y, n_samples_x))
+        myx_output_sample_counts = Array{UInt16, 2}(undef, (n_samples_x, n_samples_y))
 
         #============================================#
         # Sample tetrahedra and write to output
@@ -539,7 +539,7 @@ module Rasterization
         
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
-        tet_sample_counts   = Array{UInt16, 2}(undef, (64, 64))
+        simp_sample_counts   = Array{UInt16, 2}(undef, (64, 64))
         
         d_start             = now()
         d_last_printed      = d_start
@@ -612,7 +612,7 @@ module Rasterization
             # If the current simp has a bounding box larger than anticipated, enlarge the sample counts array accordingly
             # By allocating double the size of the bounding box, future simps that are just a bit larger than the current one
             # will not trigger a resize operation.
-            if size(tet_sample_counts, 1) < n_current_cells_y || size(tet_sample_counts, 2) < n_current_cells_x
+            if size(simp_sample_counts, 1) < n_current_cells_y || size(simp_sample_counts, 2) < n_current_cells_x
                 simp_sample_counts = Array{UInt16, 2}(undef, (n_current_cells_y * 2, n_current_cells_x * 2))
             end
 
@@ -733,16 +733,16 @@ module Rasterization
 
                                     # Calculate bathymetry height from triangle's z-coords and interpolate between them
                                     b = sum(m43_simp_points[1:3,3] .* v_λ) / 3.
-                                    l_stat_grids[1][idx_g_y, idx_g_x] = b
+                                    l_stat_grids[1][idx_g_x, idx_g_y] = b
                                 end
 
                                 for t ∈ 1:n_times
-                                    l_dyn_grids[1][idx_g_y, idx_g_x, t] = in_vars[tet_id, t, 1]
+                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1]
                                 end
                             elseif z_range == z_surface
                                 for t ∈ 1:n_times
                                     η = in_vars[tet_id, t, 1]
-                                    l_dyn_grids[1][idx_g_y, idx_g_x, t] = η
+                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = η
                                 end
                             else # Processing triangles but neither on floor nor on surface. No use for that at the moment
                                 throw(ErrorException("Not implemented."))
@@ -771,11 +771,11 @@ module Rasterization
                     num_samples = simp_sample_counts[idx_l_y, idx_l_x]
                     if num_samples > 0
                         idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
-                        total_samples = (myx_grid_sample_counts[idx_g_y, idx_g_x] += num_samples)
+                        total_samples = (myx_grid_sample_counts[idx_g_x, idx_g_y] += num_samples) # x, y flip intentional.
                         for var ∈ out_vars_dyn
                             for t ∈ 1:n_times
-                                avg = l_dyn_grids[var.id][idx_g_y, idx_g_x, t]
-                                l_dyn_grids[var.id][idx_g_y, idx_g_x, t] = avg + (in_vars[tet_id, t, var.id]-avg)*(num_samples/total_samples)
+                                avg = l_dyn_grids[var.id][idx_g_x, idx_g_y, t] # x, y flip intentional
+                                l_dyn_grids[var.id][idx_g_x, idx_g_y, t] = avg + (in_vars[tet_id, t, var.id]-avg)*(num_samples/total_samples)
                             end
                         end
                     end

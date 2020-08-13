@@ -35,12 +35,12 @@ module NC
                 y_dim = NcDim("y", y_vals, y_atts)
                 t_dim = NcDim("time", t_vals, t_atts)
 
-                b_var = NcVar("b", [y_dim, x_dim], atts=bdη_atts)
+                b_var = NcVar("b", [x_dim, y_dim], atts=bdη_atts)
 
-                u_var = NcVar("u", [y_dim, x_dim, t_dim], atts=uv_atts)
-                v_var = NcVar("v", [y_dim, x_dim, t_dim], atts=uv_atts)
-                d_var = NcVar("d", [y_dim, x_dim, t_dim], atts=bdη_atts)
-                η_var = NcVar("eta", [y_dim, x_dim, t_dim], atts=bdη_atts)
+                u_var = NcVar("u", [x_dim, y_dim, t_dim], atts=uv_atts)
+                v_var = NcVar("v", [x_dim, y_dim, t_dim], atts=uv_atts)
+                d_var = NcVar("d", [x_dim, y_dim, t_dim], atts=bdη_atts)
+                η_var = NcVar("eta", [x_dim, y_dim, t_dim], atts=bdη_atts)
 
                 NetCDF.create(filename, b_var, u_var, v_var, d_var, η_var)
             else
