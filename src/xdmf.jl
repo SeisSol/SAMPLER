@@ -1,6 +1,7 @@
 module XDMF
     using XMLDict
     using Mmap
+    using HDF5
 
     export grid_of, data_of
 
@@ -77,7 +78,7 @@ module XDMF
 
         @assert range_item[:Format] == "XML"
         @assert range_item[:Dimensions] == "3 2"
-        @assert binary_item[:Format] == "Binary"
+        @assert binary_item[:Format] ∈ ["Binary", "HDF"]
 
         target_dims = parse(UInt, data_item[:Dimensions])
         hyperslab_range = range_item[""]
@@ -96,9 +97,32 @@ module XDMF
         file_range = tuple(reverse(file_range)...) # Column-major order!
 
         filename = binary_item[""]
-        filename = joinpath(base_path, filename)
-        whole_file = Mmap.mmap(filename, Array{number_type, 2}, file_range)
-        return @view whole_file[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
+
+        if binary_item[:Format] == "HDF"
+            path_parts = split(filename, ':', limit=1)
+            if isempty(path_parts[1]) || isempty(path_parts[2])
+                error("HDF5 group path is invalid.")
+            end
+
+            filename = joinpath(base_path, path_parts[1])
+            hdf_dataset_path = path_parts[2]
+
+            hdf_file = h5open(filename, "r")
+            hdf_dataset = hdf_file[hdf_dataset_path]
+            if !ismmappable(hdf_dataset)
+                close(hdf_file)
+                error("Handling compressed/chunked HDF5 files is not yet implemented!")
+            end
+            
+            hdf_mmap = readmmap(hdf_dataset)
+            close(hdf_file)
+            hdf_mmap = reshape(hdf_mmap, dimensions)
+            return @view hdf_mmap[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
+        else
+            filename = joinpath(base_path, filename)
+            whole_file = Mmap.mmap(filename, Array{number_type, 2}, file_range)
+            return @view whole_file[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
+        end
     end
 
     function mmap_data_item(data_item::XMLDict.XMLDictElement, base_path::AbstractString)
@@ -110,8 +134,31 @@ module XDMF
         dimensions = tuple(reverse(dimensions)...) # Column-major order!
 
         filename = data_item[""]
-        filename = joinpath(base_path, filename)
-        return Mmap.mmap(filename, Array{number_type,length(dimensions)}, dimensions)
+
+        if data_item[:Format] == "HDF"
+            path_parts = split(filename, ':', limit=1)
+            if isempty(path_parts[1]) || isempty(path_parts[2])
+                error("HDF5 group path is invalid.")
+            end
+
+            filename = joinpath(base_path, path_parts[1])
+            hdf_dataset_path = path_parts[2]
+
+            hdf_file = h5open(filename, "r")
+            hdf_dataset = hdf_file[hdf_dataset_path]
+            if !ismmappable(hdf_dataset)
+                close(hdf_file)
+                error("Handling compressed/chunked HDF5 files is not yet implemented!")
+            end
+
+            
+            hdf_mmap = readmmap(hdf_dataset)
+            close(hdf_file)
+            return reshape(hdf_mmap, dimensions)
+        else
+            filename = joinpath(base_path, filename)
+            return Mmap.mmap(filename, Array{number_type,length(dimensions)}, dimensions)
+        end
     end
 
     function get_number_type(data_item::XMLDict.XMLDictElement) :: Type
