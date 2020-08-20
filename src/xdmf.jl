@@ -105,7 +105,7 @@ module XDMF
             end
 
             filename = joinpath(base_path, path_parts[1])
-            hdf_dataset_path = path_parts[2]
+            hdf_dataset_path = String(path_parts[2])
 
             hdf_file = h5open(filename, "r")
             hdf_dataset = hdf_file[hdf_dataset_path]
@@ -142,7 +142,7 @@ module XDMF
             end
 
             filename = joinpath(base_path, path_parts[1])
-            hdf_dataset_path = path_parts[2]
+            hdf_dataset_path = String(path_parts[2])
 
             hdf_file = h5open(filename, "r")
             hdf_dataset = hdf_file[hdf_dataset_path]
