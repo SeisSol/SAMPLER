@@ -99,7 +99,7 @@ module XDMF
         filename = binary_item[""]
 
         if binary_item[:Format] == "HDF"
-            path_parts = split(filename, ':', limit=1)
+            path_parts = split(filename, ':', limit=2)
             if isempty(path_parts[1]) || isempty(path_parts[2])
                 error("HDF5 group path is invalid.")
             end
@@ -136,7 +136,7 @@ module XDMF
         filename = data_item[""]
 
         if data_item[:Format] == "HDF"
-            path_parts = split(filename, ':', limit=1)
+            path_parts = split(filename, ':', limit=2)
             if isempty(path_parts[1]) || isempty(path_parts[2])
                 error("HDF5 group path is invalid.")
             end
