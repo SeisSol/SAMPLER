@@ -54,7 +54,7 @@ module Rasterization
     function rasterize(
         simplices       :: AbstractArray{INDEX_TYPE, 2}, 
         points          :: AbstractArray{Float64, 2},
-        in_vars         :: AbstractArray{A where A <: AbstractArray, 2},
+        in_vars         ,
         in_var_names    :: AbstractArray,
         times           :: AbstractArray{Float64, 1}, 
         sampling_rate   :: NTuple{3, Float64}, 
@@ -101,7 +101,11 @@ module Rasterization
             s_z_range = nothing
 
             if z_range == z_floor
-                i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] - Z_RANGE_TOL)
+                if i_domain_z[1] == i_domain_z[2]
+                    i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
+                else
+                    i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] - Z_RANGE_TOL)
+                end
                 s_region = "floor"
             else # if z == z_surface
                 i_domain_z = (i_domain_z[2] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
@@ -468,6 +472,10 @@ module Rasterization
                 print_progress = true, lb_autotune=l_tet_autotune_values)
 
             println("Done.")
+
+            for t ∈ t_start:(t_start + n_times - 1), i ∈ size(in_vars, 2)
+                in_vars[t, i] = []
+            end
 
             # Collect the AABB volumes and runtimes for each simplex and calculate the workload-LB params through linear regression.
             # Currently does not deliver desirable results. Do not use.

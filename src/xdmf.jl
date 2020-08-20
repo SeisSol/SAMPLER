@@ -116,7 +116,9 @@ module XDMF
             
             hdf_mmap = readmmap(hdf_dataset)
             close(hdf_file)
-            hdf_mmap = reshape(hdf_mmap, dimensions)
+            num_timesteps = length(hdf_mmap) ÷ file_range[1]
+
+            hdf_mmap = reshape(hdf_mmap, (file_range[1], num_timesteps))
             return @view hdf_mmap[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
         else
             filename = joinpath(base_path, filename)
