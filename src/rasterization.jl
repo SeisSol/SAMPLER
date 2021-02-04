@@ -50,6 +50,7 @@ module Rasterization
     - `lb_params`:      The parameters for the workload-LB as obtained by the autotuning procedure
     - `lb_autotune`:    Whether to run the autotune procedure for the workload-LB. Only runs the first iteration of the rasterization.
     - `water_height`:   The offset to translate the water level to be at `z=0`.
+    - `tanioka`:        Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
     """
     function rasterize(
         simplices       :: AbstractArray{INDEX_TYPE, 2}, 
@@ -67,7 +68,8 @@ module Rasterization
         load_balancer   :: LoadBalancer = naive,
         lb_params       :: NTuple{2, Float64} = (0., 0.),
         lb_autotune     :: Bool = false,
-        water_height    :: Float64 = 0.) where INDEX_TYPE <: Integer
+        water_height    :: Float64 = 0.,
+        tanioka         :: Bool = false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -442,7 +444,7 @@ module Rasterization
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -457,7 +459,7 @@ module Rasterization
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
             end # for thread_id
 
             # R-partitioning
@@ -469,7 +471,7 @@ module Rasterization
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
                 l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                print_progress = true, lb_autotune=l_tet_autotune_values)
+                tanioka=tanioka, print_progress = true, lb_autotune=l_tet_autotune_values)
 
             println("Done.")
 
@@ -527,27 +529,28 @@ module Rasterization
 
     function iterate_tets!(
         bin_id,           l_bin_ids,    l_bin_counts, 
-        n_tetrahedra,     l_simplices, l_points, 
+        n_tetrahedra,     l_simplices,  l_points, 
         in_vars,          out_vars_dyn, out_vars_stat,
         i_domain_x,       i_domain_y,   i_domain_z,
         n_samples_x,      n_samples_y,  n_samples_z,
         v_sampling_rate,  t_start,      n_times,
         l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
-        n_simplex_points, z_range;      print_progress=false, lb_autotune :: Union{Nothing, Array{Int, 2}} = nothing)
+        n_simplex_points, z_range;      
+        tanioka=false, print_progress=false, lb_autotune :: Union{Nothing, Array{Int, 2}} = nothing)
 
         #============================================#
         # Pre-allocate memory used throughout
         # rasterization by this thread
         #============================================#
 
-        m43_simp_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
+        m43_simp_points     = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
         l_face_points       = Array{SubArray, 1}(undef, n_simplex_points)
         l_tet_faces         = Array{HesseNormalForm, 1}(undef, n_simplex_points)
         
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
-        simp_sample_counts   = Array{UInt16, 2}(undef, (64, 64))
+        simp_sample_counts  = Array{UInt16, 2}(undef, (64, 64))
         
         d_start             = now()
         d_last_printed      = d_start
@@ -740,12 +743,34 @@ module Rasterization
                                     v_λ = bary_coords_2d(v_p, m43_simp_points)
 
                                     # Calculate bathymetry height from triangle's z-coords and interpolate between them
-                                    b = sum(m43_simp_points[1:3,3] .* v_λ) / 3.
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
                                     l_stat_grids[1][idx_g_x, idx_g_y] = b
+                                    #println("b: $(b), p: $(m43_simp_points[1:3,3]), v_λ: $(v_λ)\n")
                                 end
 
-                                for t ∈ 1:n_times
-                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1]
+                                tanioka_offset = 0.
+
+                                if tanioka
+                                    # ∂b/∂x
+                                    v_λ = bary_coords_2d(v_p .+ (1., 0., 0.), m43_simp_points)
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
+                                    ∂b∂x = b - l_stat_grids[1][idx_g_x, idx_g_y]
+                                    #print("b:$(b) dx:$(∂b∂x) | ")
+
+                                    # ∂b/∂y
+                                    v_λ = bary_coords_2d(v_p .+ (0., 1., 0.), m43_simp_points)
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
+                                    ∂b∂y = b - l_stat_grids[1][idx_g_x, idx_g_y]
+                                    #print("b:$(b) dy:$(∂b∂y)\n")
+
+                                    for t ∈ 1:n_times
+                                        tanioka_offset = ∂b∂x * in_vars[tet_id, t, 2] + ∂b∂y * in_vars[tet_id, t, 3]
+                                        l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1] - tanioka_offset
+                                    end
+                                else
+                                    for t ∈ 1:n_times
+                                        l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1]
+                                    end
                                 end
                             elseif z_range == z_surface
                                 for t ∈ 1:n_times

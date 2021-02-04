@@ -6,4 +6,5 @@
 *.csv
 *.txt
 *.out
+*.tmp
 profile.txt

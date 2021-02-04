@@ -115,9 +115,16 @@ module Args
                 default = 0.
             "--memory-limit", "-m"
                 help = """The maximum amount of RAM the script should use. This is only a SOFT limit!\n
+                                \t [CAUTION] Currently, this limit is quite imprecise, do not specify more than ~half of the available RAM here!\n
                                 \t Examples: 8G; 2T; 512M\n
                                 \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
                 default = "8G"
+            "--tanioka"
+                help = """Apply Tanioka's method for converting horizontal displacements to vertical ones during rasterization."""
+                action = :store_true
+            "--kajiura"
+                help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
+                action = :store_true
             "--load-balancer"
                 help = """The static load balancer to choose when assigning simplices to threads. Options are:\n
                                 \t naive: Every thread works on a bin that is |D| / n_threads in size\n
@@ -128,9 +135,6 @@ module Args
             "--lb-autotune"
                 help = """[DO NOT USE] Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
                     The found parameters will be saved automatically and the workload-LB can then be used."""
-                action = :store_true
-            "--kajiura"
-                help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
                 action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."

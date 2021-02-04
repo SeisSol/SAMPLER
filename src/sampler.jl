@@ -26,6 +26,7 @@ function main()
     sampling_rate = ARGS["sampling-rate"]
     has_3d = !isempty(ARGS["input-file-3d"])
     has_kajiura = ARGS["kajiura"]
+    has_tanioka = ARGS["tanioka"]
 
     #============================================#
     # Compare timesteps of 2D and 3D files.
@@ -120,11 +121,12 @@ function main()
         #============================================#
 
         if !has_kajiura
-            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+            var_names = has_tanioka ? ["W", "U", "V"] : ["W"]
+            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], var_names...), var_names, 
                                     times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                     z_range=Rasterization.z_surface, 
                                     t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                    lb_params=lb_params, water_height=water_height)
+                                    lb_params=lb_params, water_height=water_height, tanioka=has_tanioka)
         end
 
 
