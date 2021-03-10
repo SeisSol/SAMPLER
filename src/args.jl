@@ -122,7 +122,7 @@ module Args
             "--tanioka"
                 help = """Apply Tanioka's method for converting horizontal displacements to vertical ones during rasterization."""
                 action = :store_true
-            "--kajiura"
+            "--seafloor-only"
                 help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
                 action = :store_true
             "--load-balancer"

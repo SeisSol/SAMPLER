@@ -47,21 +47,34 @@ Once you have rasterized the SeisSol output files, you can _optionally_ use Kaji
 Note: Kajiura's Filter needs to process all timesteps prior to "timestep_end".
 
 ## Examples
-### Basic example (seafloor and sea surface data is available)
+### Basic example: Rasterize 2D grids (seafloor and sea surface data is available)
 
     julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc ~/seissol-outputs/out-surface.xdmf
 
 Only rasterizes the 2D surface outputs (seafloor and sea surface elevation).
 
-### Rasterize and Kajiura (if only seafloor data is available)
+### Rasterize only seafloor (and optionally apply Kajiura's Filter)
 
-    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --kajiura ~/seissol-outputs/out-surface.xdmf
+    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
+    
+Only rasterizes the 2D _seafloor_ elevation over time.
+
+Optionally thereafter:
+    
     julia kajiura.jl ~/sampler-output.nc ~/kajiura-output.nc 300
 
-Only rasterizes the 2D _seafloor_ elevation over time.
-Then applies Kajiura's filter to it.
+Applies Kajiura's Filter for 300 timesteps.
 
-Note: You can also rasterize the SeisSol outputs fully (without `--kajiura`) and then apply Kajiura's filter to them. But that usually does not make much sense.
+Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-only`) and then apply Kajiura's Filter to them. But that usually does not make much sense.
+
+### Rasterize seafloor using Tanioka's method
+
+    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
+
+Applies Tanioka's method while rasterizing the seafloor. Needed if bathymetry is not flat.
+
+Note: You can also use Tanioka's method when rasterizing more than just the seafloor outputs. 
+It will only affect the seafloor uplift, though.
 
 ### Rasterize fully (with 3D velocity grid)
 
@@ -76,7 +89,7 @@ The other versions of sam(oa)² cannot handle multiple variables in one input fi
 Refer to its README.md for mor information.
 
 ## Known Issues
-* The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Use about half of the memory available on your machine / cluster node.
+* The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
 
 
 [1]: http://www.seissol.org/

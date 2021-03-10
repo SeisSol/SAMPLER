@@ -25,8 +25,8 @@ function main()
     
     sampling_rate = ARGS["sampling-rate"]
     has_3d = !isempty(ARGS["input-file-3d"])
-    has_kajiura = ARGS["kajiura"]
     has_tanioka = ARGS["tanioka"]
+    seafloor_only = ARGS["seafloor-only"]
 
     #============================================#
     # Compare timesteps of 2D and 3D files.
@@ -121,7 +121,7 @@ function main()
         # Process 2D sea surface
         #============================================#
 
-        if !has_kajiura
+        if !seafloor_only
             Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                                     times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                     z_range=Rasterization.z_surface, 
@@ -139,7 +139,7 @@ function main()
     # Process 3D mesh
     #============================================#
 
-    if has_3d && !has_kajiura
+    if has_3d && !seafloor_only
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
