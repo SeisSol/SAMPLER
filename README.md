@@ -57,14 +57,11 @@ Only rasterizes the 2D surface outputs (seafloor and sea surface elevation).
 
     julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
     
-Only rasterizes the 2D _seafloor_ elevation over time.
-
-Optionally thereafter:
+Only rasterizes the 2D _seafloor_ elevation over time. Optionally thereafter:
     
     julia kajiura.jl ~/sampler-output.nc ~/kajiura-output.nc 300
 
 Applies Kajiura's Filter for 300 timesteps.
-
 Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-only`) and then apply Kajiura's Filter to them. But that usually does not make much sense.
 
 ### Rasterize seafloor using Tanioka's method
@@ -72,7 +69,6 @@ Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-only
     julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
 
 Applies Tanioka's method while rasterizing the seafloor. Needed if bathymetry is not flat.
-
 Note: You can also use Tanioka's method when rasterizing more than just the seafloor outputs. 
 It will only affect the seafloor uplift, though.
 
