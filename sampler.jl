@@ -5,11 +5,11 @@ sampler.jl:
 - Date: 2020-03-30
 =#
 
-include("util.jl")
-include("args.jl")
-include("xdmf.jl")
-include("netcdf.jl")
-include("rasterization.jl")
+include("io/util.jl")
+include("io/args.jl")
+include("io/xdmf.jl")
+include("io/netcdf.jl")
+include("rasterizer/rasterization.jl")
 
 using Base.Threads
 using Mmap

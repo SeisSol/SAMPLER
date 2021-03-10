@@ -13,6 +13,6 @@ module load slurm_setup
 export JULIA_NUM_THREADS=28
 echo "Starting SAMPLER with $JULIA_NUM_THREADS threads:"
 date
-~/julia-1.4.1/bin/julia -O3 ./sampler.jl --water-height=2000 -m 25G -o $SCRATCH/dummy.nc $SCRATCH/output2/out-surface.xdmf $SCRATCH/output2/out.xdmf
+julia ./sampler.jl --water-height=2000 -m 25G -o $SCRATCH/dummy.nc $SCRATCH/output2/out-surface.xdmf $SCRATCH/output2/out.xdmf
 date
 echo "Done."

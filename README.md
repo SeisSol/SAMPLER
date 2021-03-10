@@ -38,7 +38,7 @@ Note: For an explanation of the available command line options, type:
     julia sampler.jl --help
 
 You can also have a look at the `run_sampler.sh` and `run_kajiura.sh` scripts to see how SAMPLER can be executed on the LRZ compute clusters.
-More help for running on the cluster can be fount [here][5].
+More help for running on the cluster can be found [here][5].
 
 Once you have rasterized the SeisSol output files, you can _optionally_ use Kajiura's filter on the outputs:
 
@@ -84,8 +84,20 @@ You need the [max-bachelor][6] branch of sam(oa)² in order to seamlessly use th
 The other versions of sam(oa)² cannot handle multiple variables in one input file yet.
 Refer to its README.md for mor information.
 
+## Output format
+SAMPLER will always produce a regular grid in NetCDF format, with point data according to the command line parameters given.
+The NetCDF file will always contain these variables (but not all of them are necessarily filled with data):
+* x - x-coordinates, always written
+* y - y-coordinates, always written
+* b - bathymetry height, always written
+* d - seafloor displacements, always written
+* eta - seasurface displacement, only written if there are triangles in the 2D input at sealevel
+* u - water velocity in x-direction, only written when rasterizing fully (with 3D)
+* v - water velocity in y-direction, only written when rasterizing fully (with 3D)
+
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
+* Currently, chunking in HDF5 inputs is not supported due to library constraints. If you get an error when using such inputs, use the 
 
 
 [1]: http://www.seissol.org/
