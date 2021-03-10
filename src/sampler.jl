@@ -107,12 +107,13 @@ function main()
         #============================================#
 
         triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
+        var_names = has_tanioka ? ["W", "U", "V"] : ["W"]
 
-        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
+        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], var_names...), var_names, 
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                 z_range=Rasterization.z_floor, create_file=true, 
                                 t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                lb_params=lb_params, water_height=water_height)
+                                lb_params=lb_params, water_height=water_height, tanioka=has_tanioka)
 
         GC.gc(true)
 
@@ -121,12 +122,11 @@ function main()
         #============================================#
 
         if !has_kajiura
-            var_names = has_tanioka ? ["W", "U", "V"] : ["W"]
-            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], var_names...), var_names, 
+            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
                                     times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                     z_range=Rasterization.z_surface, 
                                     t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                    lb_params=lb_params, water_height=water_height, tanioka=has_tanioka)
+                                    lb_params=lb_params, water_height=water_height)
         end
 
 
