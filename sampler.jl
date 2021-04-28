@@ -28,6 +28,10 @@ function main()
     has_tanioka = ARGS["tanioka"]
     seafloor_only = ARGS["seafloor-only"]
 
+    seafloor_vars = ARGS["seafloor-vars"]
+    surface_vars = ARGS["surface-vars"]
+    volumetric_vars = ARGS["volumetric-vars"]
+
     #============================================#
     # Compare timesteps of 2D and 3D files.
     # They must be equal.
@@ -57,83 +61,48 @@ function main()
         timestep_end -= 1
     end
 
-    #============================================#
-    # Load balancing parameters.
-    # The naive balancer yields the best runtimes.
-    # Do not use the other ones.
-    #============================================#
-
-    lb_autotune = ARGS["lb-autotune"]
-
-    load_balancer = ARGS["load-balancer"]
-    lb_params = (0., 0.)
-
-    if lb_autotune
-        if !has_3d
-            println("The workload-LB currently can only be autotuned on tetrahedra. Please supply a 3D mesh also.")
-            exit(1)
-        end
-
-        println("Performing LB-autotune.")
-
-        load_balancer = Main.Rasterization.naive
-    elseif load_balancer == "naive"
-        load_balancer = Main.Rasterization.naive
-    elseif load_balancer == "count"
-        load_balancer = Main.Rasterization.count
-    else
-        load_balancer = Main.Rasterization.workload
-
-        if isfile("sampler_lb_params.txt")
-            str_params = readline("sampler_lb_params.txt")
-            ls_params = split(str_params, ';')
-            lb_params = (parse(Float64, ls_params[1]), parse(Float64, ls_params[2]))
-        else
-            println("To use the workload-LB, please run first with your scenario settings and --lb-autotune")
-            println("Using fallback (naive) LB instead!")
-            load_balancer = Main.rasterization.naive
-        end
-    end
-
     water_height = ARGS["water-height"]
 
     # Delete output file if it already exists
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
 
-    if !lb_autotune
-        #============================================#
-        # Process 2D seafloor
-        #============================================#
+    #============================================#
+    # Process 2D seafloor
+    #============================================#
 
-        triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
-        var_names = has_tanioka ? ["W", "U", "V"] : ["W"]
+    triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
 
-        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], var_names...), var_names, 
-                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                z_range=Rasterization.z_floor, create_file=true, 
-                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                lb_params=lb_params, water_height=water_height, tanioka=has_tanioka)
-
-        GC.gc(true)
-
-        #============================================#
-        # Process 2D sea surface
-        #============================================#
-
-        if !seafloor_only
-            Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], "W"), ["W"], 
-                                    times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                    z_range=Rasterization.z_surface, 
-                                    t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                    lb_params=lb_params, water_height=water_height)
-        end
-
-
-        triangles = nothing
-        points_2d = nothing
-        GC.gc(true)
+    # If tanioka, add horizontal seafloor displacements to seafloor_vars if not already in there
+    if has_tanioka
+        for var ∈ ["U", "V"]; if !haskey(seafloor_vars, var); seafloor_vars[var] = var; end
     end
+
+    in_names = keys(seafloor_vars)
+    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
+                            times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                            z_range=Rasterization.z_floor, create_file=true, 
+                            t_begin=timestep_begin, t_end=timestep_end, 
+                            water_height=water_height, tanioka=has_tanioka)
+
+    GC.gc(true)
+
+    #============================================#
+    # Process 2D sea surface
+    #============================================#
+
+    if !seafloor_only
+        in_names = keys(surface_vars)
+        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, surface_vars,
+                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
+                                z_range=Rasterization.z_surface, 
+                                t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
+    end
+
+
+    triangles = nothing
+    points_2d = nothing
+    GC.gc(true)
 
     #============================================#
     # Process 3D mesh
@@ -142,10 +111,10 @@ function main()
     if has_3d && !seafloor_only
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
-        Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], "u", "v"), ["u", "v"], 
-                                times, sampling_rate, out_filename, ARGS["memory-limit"], create_file=lb_autotune,
-                                t_begin=timestep_begin, t_end=timestep_end, load_balancer=load_balancer, 
-                                lb_params=lb_params, lb_autotune=lb_autotune, water_height=water_height)
+        in_names = keys(volumetric_vars)
+        Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], in_names...), in_names, volumetric_vars,
+                                times, sampling_rate, out_filename, ARGS["memory-limit"],
+                                t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
     end
 end
 
