@@ -6,48 +6,39 @@
 #SBATCH --get-user-env
 #SBATCH --partition=micro
 #SBATCH --account=pr63qo
-#SBATCH --nodes=1-12
+#SBATCH --nodes=1
 #SBATCH --export=NONE
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=m.schmeller@tum.de
 #SBATCH --time=00:30:00
-#SBATCH --array=1-12
 module load slurm_setup
 . ~/.bashrc
+
+# exit when any command fails
+set -e
+# echo an error message before exiting
+trap 'echo "\"${last_command}\" command filed with exit code $?."' EXIT
+
 export JULIA_NUM_THREADS=48
 date
-<<<<<<< HEAD:src/run_sampler.sh
 
-case $SLURM_ARRAY_TASK_ID in
-    1)  MAJ=25; MIN=25;;
-    2)  MAJ=25; MIN=50;;
-    3)  MAJ=25; MIN=75;;
-    4)  MAJ=30; MIN=25;;
-    5)  MAJ=30; MIN=50;;
-    6)  MAJ=30; MIN=75;;
-    7)  MAJ=40; MIN=25;;
-    8)  MAJ=40; MIN=50;;
-    9)  MAJ=40; MIN=75;;
-    10) MAJ=45; MIN=25;;
-    11) MAJ=45; MIN=50;;
-    12) MAJ=45; MIN=75;;
-esac
+SRCDIR="/hppfs/work/pn68fi/ga24dib3/shared/ascete_waterlayer_wo_gravity/run_0/output"
+DSTDIR="$WORK_pn68fi/lukas"
+OUTNAME='out-surface'
+mkdir -p $DSTDIR
+echo "=== Working on $SRCDIR"
 
-RELDIR="${MAJ}km/$MIN"
-mkdir -p $WORK_pr63qo/$RELDIR
-echo "=== Working on $RELDIR"
+#cp $SRCDIR/${OUTNAME}.xdmf $DSTDIR
+#echo '=== Copied XDMF to own directory'
 
-cp /hppfs/work/pr63qo/ru94haf3/share/Max/$RELDIR/output-surface.xdmf $WORK_pr63qo/$RELDIR/
-echo '=== Copied XDMF to own directory'
-
-echo '=== Pre-processing HDF5 files'
-$HOME/ascete-tools/hdf5_preprocess.sh /hppfs/work/pr63qo/ru94haf3/share/Max/$RELDIR/output-surface $WORK_pr63qo/$RELDIR/output-surface
-echo '=== Pre-processed HDF5 files'
+#echo '=== Pre-processing HDF5 files'
+#$HOME/ascete-tools/hdf5_preprocess.sh $SRCDIR/$OUTNAME $DSTDIR/$OUTNAME
+#echo '=== Pre-processed HDF5 files'
 
 echo "=== Starting SAMPLER with $JULIA_NUM_THREADS threads:"
-julia ./sampler.jl --water-height=2000 --kajiura -m 40G -r 500,500,500 -o $WORK_pr63qo/$RELDIR/displacement.nc $WORK_pr63qo/$RELDIR/output-surface.xdmf
-=======
-julia ./sampler.jl --water-height=2000 -m 25G -o $SCRATCH/dummy.nc $SCRATCH/output2/out-surface.xdmf $SCRATCH/output2/out.xdmf
->>>>>>> 654ae8cda3e6be6e7c9d56d4f1c153defa81a9fb:run_sampler.sh
+fvars="U=>fU,V=>fV,W=>fW,u=>fu,v=>fv,w=>fw"
+svars="U=>sU,V=>sV,W=>sW,u=>su,v=>sv,w=>sw"
+
+julia ./sampler.jl --water-height=2000 --seafloor-vars $fvars --surface-vars $svars -m 25G -o "$DSTDIR/rasterized.nc" "$SRCDIR/${OUTNAME}.xdmf"
 date
 echo "=== Complete."

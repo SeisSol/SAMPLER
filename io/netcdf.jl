@@ -59,7 +59,8 @@ module NC
 
                 static_vars = map(name -> NcVar(name, [x_dim, y_dim], atts=get_units(name)), create_static_vars)
                 dynamic_vars = map(name -> NcVar(name, [x_dim, y_dim, t_dim], atts=get_units(name)), create_dynamic_vars)
-
+                print(create_static_vars)
+                print(create_dynamic_vars)
                 NetCDF.create(filename, static_vars..., dynamic_vars...)
             else
                 NetCDF.open(filename, mode=NC_WRITE)
