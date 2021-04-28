@@ -302,13 +302,13 @@ module Rasterization
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
-        for var ∈ out_vars_dyn
-            l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_x, n_samples_y, n_timesteps_per_iteration))
+        for index ∈ values(out_vars_dyn)
+            l_dyn_output_grids[index] = Array{Float64, 3}(undef, (n_samples_x, n_samples_y, n_timesteps_per_iteration))
         end
 
         l_stat_output_grids = Array{Array{Float64, 2}, 1}(undef, n_out_vars_stat)
-        for var ∈ out_vars_stat
-            l_stat_output_grids[var.id] = Array{Float64, 2}(undef, (n_samples_x, n_samples_y))
+        for index ∈ values(out_vars_stat)
+            l_stat_output_grids[index] = Array{Float64, 2}(undef, (n_samples_x, n_samples_y))
         end
 
         # This matrix counts the total number of samples in each output grid cell
@@ -429,16 +429,16 @@ module Rasterization
             start = [1, 1, (t_start-t_begin)+1]
             count = [-1, -1, n_times]
 
-            for var ∈ out_vars_dyn
-                ncwrite(l_dyn_output_grids[var.id], out_filename, var.name, start=start, count=count)
+            for (name, index) ∈ out_vars_dyn
+                ncwrite(l_dyn_output_grids[index], out_filename, name, start=start, count=count)
             end
 
             if iteration == 1 # Only write static outputs once
-                for var ∈ out_vars_stat
-                    if var.name == "b" # Water height correction
-                        l_stat_output_grids[var.id] .-= water_height
+                for (name, index) ∈ out_vars_stat
+                    if name == "b" # Water height correction
+                        l_stat_output_grids[index] .-= water_height
                     end
-                    ncwrite(l_stat_output_grids[var.id], out_filename, var.name, start=[1, 1], count=[-1, -1])
+                    ncwrite(l_stat_output_grids[index], out_filename, name, start=[1, 1], count=[-1, -1])
                 end
             end
 
@@ -723,10 +723,10 @@ module Rasterization
                     if num_samples > 0
                         idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
                         total_samples = (myx_grid_sample_counts[idx_g_x, idx_g_y] += num_samples) # x, y flip intentional.
-                        for var ∈ out_vars_dyn
+                        for index ∈ values(out_vars_dyn)
                             for t ∈ 1:n_times
-                                avg = l_dyn_grids[var.id][idx_g_x, idx_g_y, t] # x, y flip intentional
-                                l_dyn_grids[var.id][idx_g_x, idx_g_y, t] = avg + (in_vars[tet_id, t, var.id]-avg)*(num_samples/total_samples)
+                                avg = l_dyn_grids[index][idx_g_x, idx_g_y, t] # x, y flip intentional
+                                l_dyn_grids[index][idx_g_x, idx_g_y, t] = avg + (in_vars[tet_id, t, index]-avg)*(num_samples/total_samples)
                             end
                         end
                     end

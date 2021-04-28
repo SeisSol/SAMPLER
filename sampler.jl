@@ -87,7 +87,9 @@ function main()
     all_out_names = [collect(values(seafloor_vars)); 
                      surface_output ? collect(values(surface_vars)) : []; 
                      volume_output ? collect(values(volumetric_vars)) : []]
-    all_out_names = filter(name -> name != "b", all_out_names)
+    
+    # b is the only static variable, this list only covers dynamic ones
+    all_out_names = filter(name -> name != seafloor_vars["b"], all_out_names)
 
     in_names = collect(keys(seafloor_vars))
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
