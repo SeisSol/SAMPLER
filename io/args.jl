@@ -84,11 +84,11 @@ module Args
 
     function ArgParse.parse_item(::Type{VarMapping}, x::AbstractString)
         entries = Set(split(x, ','))
-        non_mapping_entries = filter(entry -> occursin("=>", entry), entries)
-        mapping_entries = entries - non_mapping_entries
-        mapping_entries = map(str -> split(str, "=>"), mapping_entries)
+        non_mapping_entries = Set(filter(entry -> occursin("=>", entry), entries))
+        mapping_entries = setdiff(entries, non_mapping_entries)
+        mapping_entries = map(str -> split(str, "=>"), collect(mapping_entries))
         entries = merge(Dict(map(str_list -> String(str_list[1]) => String(str_list[2]), mapping_entries)),
-                        Dict(map(entry -> String(entry)=>String(entry), non_mapping_entries)))
+                        Dict(map(entry -> String(entry)=>String(entry), collect(non_mapping_entries))))
         return entries
     end
 

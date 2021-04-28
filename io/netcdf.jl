@@ -53,8 +53,6 @@ module NC
                     end
                 end
 
-                units = merge(notfound_units, units)
-
                 x_dim = NcDim("x", x_vals, dist_atts)
                 y_dim = NcDim("y", y_vals, dist_atts)
                 t_dim = NcDim("time", t_vals, t_atts)

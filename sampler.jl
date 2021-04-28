@@ -78,7 +78,7 @@ function main()
 
     # If tanioka, add horizontal seafloor displacements to seafloor_vars if not already in there
     if has_tanioka
-        for var ∈ ["U", "V"]; if !haskey(seafloor_vars, var); seafloor_vars[var] = var; end
+        for var ∈ ["U", "V"]; if !haskey(seafloor_vars, var); seafloor_vars[var] = var; end; end
     end
 
     # Ensure bathymetry output
