@@ -67,6 +67,9 @@ function main()
     out_filename = ARGS["output-file"]
     endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
 
+    surface_output = !seafloor_only
+    volume_output = !seafloor_only && has_3d
+
     #============================================#
     # Process 2D seafloor
     #============================================#
@@ -78,10 +81,17 @@ function main()
         for var ∈ ["U", "V"]; if !haskey(seafloor_vars, var); seafloor_vars[var] = var; end
     end
 
+    # Ensure bathymetry output
+    if !haskey(seafloor_vars, "b"); seafloor_vars["b"] = "b"; end
+
+    all_out_names = [values(seafloor_vars); 
+                     surface_output ? values(surface_vars) : []; 
+                     volume_output ? values(volumetric_vars) : []]
+
     in_names = keys(seafloor_vars)
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
                             times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                            z_range=Rasterization.z_floor, create_file=true, 
+                            z_range=Rasterization.z_floor, create_file_vars=all_out_names, 
                             t_begin=timestep_begin, t_end=timestep_end, 
                             water_height=water_height, tanioka=has_tanioka)
 
@@ -91,7 +101,7 @@ function main()
     # Process 2D sea surface
     #============================================#
 
-    if !seafloor_only
+    if surface_output
         in_names = keys(surface_vars)
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, surface_vars,
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
@@ -108,7 +118,7 @@ function main()
     # Process 3D mesh
     #============================================#
 
-    if has_3d && !seafloor_only
+    if volume_output
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
         in_names = keys(volumetric_vars)

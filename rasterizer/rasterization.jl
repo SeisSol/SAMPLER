@@ -32,40 +32,41 @@ module Rasterization
         Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
 
     # Arguments
-    - `simplices`:      Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
-    - `points`:         Each column consists of an x-, y- and z-coordinate representing a point in 3D space
-    - `in_vars`:        A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays 
-                        and each of those arrays contains the variable value for each simplex (in the same order)
-    - `in_var_names`:   The names, of the variables in `in_vars` in the same order as those vars
-    - `in_out_mapping`: A dictionary providing the output variable name for each input variable name
-    - `times`:          An array of timestamps associated to the timesteps
-    - `sampling_rate`:  A tuple (Δx, Δy, Δz) defining the regular grid cell size.
-    - `out_filename`:   The path/name of the output NetCDF file
-    - `mem_limit`:      The soft memory (in bytes) the software is allowed to utilize (soft limit!)
-    - `z_range`:        A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`, 
-                        `z_surface` discards everything below. `z_all` keeps all simplices.
-    - `t_begin`:        The first timestep to be rasterized
-    - `t_end`:          The last timestep to be rasterized
-    - `create_file`:    If `true`: create output file (already existing file will be overwritten). Else: use existing output file.
-    - `water_height`:   The offset to translate the water level to be at `z=0`.
-    - `tanioka`:        Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
+    - `simplices`:        Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
+    - `points`:           Each column consists of an x-, y- and z-coordinate representing a point in 3D space
+    - `in_vars`:          A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays 
+                          and each of those arrays contains the variable value for each simplex (in the same order)
+    - `in_var_names`:     The names, of the variables in `in_vars` in the same order as those vars
+    - `in_out_mapping`:   A dictionary providing the output variable name for each input variable name
+    - `times`:            An array of timestamps associated to the timesteps
+    - `sampling_rate`:    A tuple (Δx, Δy, Δz) defining the regular grid cell size.
+    - `out_filename`:     The path/name of the output NetCDF file
+    - `mem_limit`:        The soft memory (in bytes) the software is allowed to utilize (soft limit!)
+    - `z_range`:          A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`, 
+                          `z_surface` discards everything below. `z_all` keeps all simplices.
+    - `t_begin`:          The first timestep to be rasterized
+    - `t_end`:            The last timestep to be rasterized
+    - `create_file_vars`: If not empty: create output file containing the var names in the list (already existing file will be overwritten). 
+                          Else: use existing output file.
+    - `water_height`:     The offset to translate the water level to be at `z=0`.
+    - `tanioka`:          Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
     """
     function rasterize(
-        simplices       :: AbstractArray{INDEX_TYPE, 2}, 
-        points          :: AbstractArray{Float64, 2},
-        in_vars         ,
-        in_var_names    :: AbstractArray,
-        in_out_mapping  :: Main.Args.VarMapping,
-        times           :: AbstractArray{Float64, 1}, 
-        sampling_rate   :: NTuple{3, Float64}, 
-        out_filename    :: AbstractString,
-        mem_limit       :: Int64; 
-        z_range         :: ZRange = z_all, 
-        t_begin         :: Integer = 1, 
-        t_end           :: Integer = length(times), 
-        create_file     :: Bool = false,
-        water_height    :: Float64 = 0.,
-        tanioka         :: Bool = false) where INDEX_TYPE <: Integer
+        simplices        :: AbstractArray{INDEX_TYPE, 2}, 
+        points           :: AbstractArray{Float64, 2},
+        in_vars          ,
+        in_var_names     :: AbstractArray,
+        in_out_mapping   :: Main.Args.VarMapping,
+        times            :: AbstractArray{Float64, 1}, 
+        sampling_rate    :: NTuple{3, Float64}, 
+        out_filename     :: AbstractString,
+        mem_limit        :: Int64; 
+        z_range          :: ZRange = z_all, 
+        t_begin          :: Integer = 1, 
+        t_end            :: Integer = length(times), 
+        create_file_vars :: AbstractArray = [],
+        water_height     :: Float64 = 0.,
+        tanioka          :: Bool = false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -146,7 +147,7 @@ module Rasterization
         out_vars_dyn = Dict(map(i_var_tup -> in_out_mapping[i_var_tup[2]] => i_var_tup[1], enumerate(in_var_names)))
 
         # b for seafloor
-        out_vars_stat = if z_range == z_floor; Dict("b"=>1) else Dict() end
+        out_vars_stat = if z_range == z_floor; Dict(in_out_mapping["b"]=>1) else Dict() end
 
         n_out_vars_dyn              = length(out_vars_dyn)
         n_out_vars_stat             = length(out_vars_stat)
@@ -284,11 +285,13 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        if create_file 
+        if !isempty(create_file_vars) 
             Main.NC.get_or_create_netcdf(out_filename; create=true,
                                             y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
                                             x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                            t_vals=times[t_begin:t_end])
+                                            t_vals=times[t_begin:t_end],
+                                            create_static_vars=keys(out_vars_stat),
+                                            create_dynamic_vars=[in_out_mapping[var] for var ∈ create_file_vars])
         else
             Main.NC.get_or_create_netcdf(out_filename)
         end

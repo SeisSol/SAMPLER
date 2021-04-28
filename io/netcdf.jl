@@ -10,6 +10,19 @@ module NC
 
     export get_or_create_netcdf
 
+    t_atts = Dict("units" => "seconds")
+    vel_atts = Dict("units" => "m/s")
+    dist_atts = Dict("units" => "m")
+    no_atts = Dict()
+
+    static_mappings = units = Dict(
+        "b"=>dist_atts,
+        "d"=>dist_atts,
+        "eta"=>dist_atts,
+        "u"=>vel_atts,
+        "v"=>vel_atts
+    )
+
     """
     Create the NetCDF file `filename` with coordinate values `x_vals`, `y_vals` and `t_vals` or open an existing one.
 
@@ -28,20 +41,17 @@ module NC
                     throw(ArgumentError("Dimension values have to be passed when creating a NetCDF file!"))
                 end
 
-                t_atts = Dict("units" => "seconds")
-                vel_atts = Dict("units" => "m/s")
-                dist_atts = Dict("units" => "m")
-                no_attrs = Dict()
-
-                notfound_units = Dict(map(var_name -> no_attrs, [create_static_vars; create_dynamic_vars]))
-
-                units = Dict(
-                    "b"=>dist_atts,
-                    "d"=>dist_atts,
-                    "eta"=>dist_atts,
-                    "u"=>vel_atts,
-                    "v"=>vel_atts
-                )
+                function get_units(var_name:: String)
+                    if haskey(static_mappings, var_name)
+                        return static_mappings[var_name]
+                    elseif match(r"[uvw]", var_name) !== nothing
+                        return vel_atts
+                    elseif match(r"[UVWxyzbd]|(eta)", var_name) !== nothing
+                        return dist_atts
+                    else
+                        return no_atts
+                    end
+                end
 
                 units = merge(notfound_units, units)
 
@@ -49,8 +59,8 @@ module NC
                 y_dim = NcDim("y", y_vals, dist_atts)
                 t_dim = NcDim("time", t_vals, t_atts)
 
-                static_vars = map(name -> NcVar(name, [x_dim, y_dim], atts=units[name]), create_static_vars)
-                dynamic_vars = map(name -> NcVar(name, [x_dim, y_dim, t_dim], atts=units[name]), create_static_vars)
+                static_vars = map(name -> NcVar(name, [x_dim, y_dim], atts=get_units(name)), create_static_vars)
+                dynamic_vars = map(name -> NcVar(name, [x_dim, y_dim, t_dim], atts=get_units(name)), create_static_vars)
 
                 NetCDF.create(filename, static_vars..., dynamic_vars...)
             else
