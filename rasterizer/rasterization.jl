@@ -291,7 +291,7 @@ module Rasterization
                                             x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
                                             t_vals=times[t_begin:t_end],
                                             create_static_vars=collect(keys(out_vars_stat)),
-                                            create_dynamic_vars=[in_out_mapping[var] for var ∈ create_file_vars])
+                                            create_dynamic_vars=create_file_vars)
         else
             Main.NC.get_or_create_netcdf(out_filename)
         end
