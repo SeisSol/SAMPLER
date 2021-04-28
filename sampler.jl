@@ -88,7 +88,7 @@ function main()
                      surface_output ? values(surface_vars) : []; 
                      volume_output ? values(volumetric_vars) : []]
 
-    in_names = keys(seafloor_vars)
+    in_names = collect(keys(seafloor_vars))
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
                             times, sampling_rate, out_filename, ARGS["memory-limit"], 
                             z_range=Rasterization.z_floor, create_file_vars=all_out_names, 
@@ -102,7 +102,7 @@ function main()
     #============================================#
 
     if surface_output
-        in_names = keys(surface_vars)
+        in_names = collect(keys(surface_vars))
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, surface_vars,
                                 times, sampling_rate, out_filename, ARGS["memory-limit"], 
                                 z_range=Rasterization.z_surface, 
@@ -121,7 +121,7 @@ function main()
     if volume_output
         tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
 
-        in_names = keys(volumetric_vars)
+        in_names = collect(keys(volumetric_vars))
         Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], in_names...), in_names, volumetric_vars,
                                 times, sampling_rate, out_filename, ARGS["memory-limit"],
                                 t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
