@@ -15,7 +15,7 @@ module NC
     dist_atts = Dict("units" => "m")
     no_atts = Dict()
 
-    static_mappings = units = Dict(
+    static_mappings = Dict(
         "b"=>dist_atts,
         "d"=>dist_atts,
         "eta"=>dist_atts,
@@ -58,7 +58,7 @@ module NC
                 t_dim = NcDim("time", t_vals, t_atts)
 
                 static_vars = map(name -> NcVar(name, [x_dim, y_dim], atts=get_units(name)), create_static_vars)
-                dynamic_vars = map(name -> NcVar(name, [x_dim, y_dim, t_dim], atts=get_units(name)), create_static_vars)
+                dynamic_vars = map(name -> NcVar(name, [x_dim, y_dim, t_dim], atts=get_units(name)), create_dynamic_vars)
 
                 NetCDF.create(filename, static_vars..., dynamic_vars...)
             else
