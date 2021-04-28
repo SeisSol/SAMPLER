@@ -84,9 +84,9 @@ function main()
     # Ensure bathymetry output
     if !haskey(seafloor_vars, "b"); seafloor_vars["b"] = "b"; end
 
-    all_out_names = [values(seafloor_vars); 
-                     surface_output ? values(surface_vars) : []; 
-                     volume_output ? values(volumetric_vars) : []]
+    all_out_names = [collect(values(seafloor_vars)); 
+                     surface_output ? collect(values(surface_vars)) : []; 
+                     volume_output ? collect(values(volumetric_vars)) : []]
 
     in_names = collect(keys(seafloor_vars))
     Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
