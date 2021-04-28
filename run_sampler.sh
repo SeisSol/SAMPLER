@@ -16,6 +16,7 @@ module load slurm_setup
 . ~/.bashrc
 export JULIA_NUM_THREADS=48
 date
+<<<<<<< HEAD:src/run_sampler.sh
 
 case $SLURM_ARRAY_TASK_ID in
     1)  MAJ=25; MIN=25;;
@@ -45,5 +46,8 @@ echo '=== Pre-processed HDF5 files'
 
 echo "=== Starting SAMPLER with $JULIA_NUM_THREADS threads:"
 julia ./sampler.jl --water-height=2000 --kajiura -m 40G -r 500,500,500 -o $WORK_pr63qo/$RELDIR/displacement.nc $WORK_pr63qo/$RELDIR/output-surface.xdmf
+=======
+julia ./sampler.jl --water-height=2000 -m 25G -o $SCRATCH/dummy.nc $SCRATCH/output2/out-surface.xdmf $SCRATCH/output2/out.xdmf
+>>>>>>> 654ae8cda3e6be6e7c9d56d4f1c153defa81a9fb:run_sampler.sh
 date
 echo "=== Complete."

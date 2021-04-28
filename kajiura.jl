@@ -203,8 +203,11 @@ function main()
         ncwrite(current_d_diff, out_filename, "d_diff", start=[1,1,t], count=[-1,-1,1])
         ncwrite(current_η_diff, out_filename, "eta_diff", start=[1,1,t], count=[-1,-1,1])
     end
-
-    println("Done.")
 end
+
+println("Using $(nthreads()) threads.")
+
+Pkg.precompile()
+println("Done.")
 
 main()

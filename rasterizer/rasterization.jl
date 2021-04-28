@@ -14,11 +14,11 @@ module Rasterization
     using Profile
     using Main.Util
     using Main.NC
+    using Main.Args
 
     export rasterize, ZRange
 
     @enum ZRange z_all=-1 z_floor=0 z_surface=1
-    @enum LoadBalancer naive=0 count=1 workload=2
 
     struct HesseNormalForm
         n0  :: NTuple{3, Float64}
@@ -32,44 +32,41 @@ module Rasterization
         Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
 
     # Arguments
-    - `simplices`:      Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
-    - `points`:         Each column consists of an x-, y- and z-coordinate representing a point in 3D space
-    - `in_vars`:        A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays 
-                        and each of those arrays contains the variable value for each simplex (in the same order)
-    - `in_var_names`:   The names, of the variables in `in_vars` in the same order as those vars
-    - `times`:          An array of timestamps associated to the timesteps
-    - `sampling_rate`:  A tuple (Δx, Δy, Δz) defining the regular grid cell size.
-    - `out_filename`:   The path/name of the output NetCDF file
-    - `mem_limit`:      The soft memory (in bytes) the software is allowed to utilize (soft limit!)
-    - `z_range`:        A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`, 
-                        `z_surface` discards everything below. `z_all` keeps all simplices.
-    - `t_begin`:        The first timestep to be rasterized
-    - `t_end`:          The last timestep to be rasterized
-    - `create_file`:    If `true`: create output file (already existing file will be overwritten). Else: use existing output file.
-    - `load_balancer`:  The load balancer to be used.
-    - `lb_params`:      The parameters for the workload-LB as obtained by the autotuning procedure
-    - `lb_autotune`:    Whether to run the autotune procedure for the workload-LB. Only runs the first iteration of the rasterization.
-    - `water_height`:   The offset to translate the water level to be at `z=0`.
-    - `tanioka`:        Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
+    - `simplices`:        Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
+    - `points`:           Each column consists of an x-, y- and z-coordinate representing a point in 3D space
+    - `in_vars`:          A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays 
+                          and each of those arrays contains the variable value for each simplex (in the same order)
+    - `in_var_names`:     The names, of the variables in `in_vars` in the same order as those vars
+    - `in_out_mapping`:   A dictionary providing the output variable name for each input variable name
+    - `times`:            An array of timestamps associated to the timesteps
+    - `sampling_rate`:    A tuple (Δx, Δy, Δz) defining the regular grid cell size.
+    - `out_filename`:     The path/name of the output NetCDF file
+    - `mem_limit`:        The soft memory (in bytes) the software is allowed to utilize (soft limit!)
+    - `z_range`:          A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`, 
+                          `z_surface` discards everything below. `z_all` keeps all simplices.
+    - `t_begin`:          The first timestep to be rasterized
+    - `t_end`:            The last timestep to be rasterized
+    - `create_file_vars`: If not empty: create output file containing the var names in the list (already existing file will be overwritten). 
+                          Else: use existing output file.
+    - `water_height`:     The offset to translate the water level to be at `z=0`.
+    - `tanioka`:          Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
     """
     function rasterize(
-        simplices       :: AbstractArray{INDEX_TYPE, 2}, 
-        points          :: AbstractArray{Float64, 2},
-        in_vars         ,
-        in_var_names    :: AbstractArray,
-        times           :: AbstractArray{Float64, 1}, 
-        sampling_rate   :: NTuple{3, Float64}, 
-        out_filename    :: AbstractString,
-        mem_limit       :: Int64; 
-        z_range         :: ZRange = z_all, 
-        t_begin         :: Integer = 1, 
-        t_end           :: Integer = length(times), 
-        create_file     :: Bool = false, 
-        load_balancer   :: LoadBalancer = naive,
-        lb_params       :: NTuple{2, Float64} = (0., 0.),
-        lb_autotune     :: Bool = false,
-        water_height    :: Float64 = 0.,
-        tanioka         :: Bool = false) where INDEX_TYPE <: Integer
+        simplices        :: AbstractArray{INDEX_TYPE, 2}, 
+        points           :: AbstractArray{Float64, 2},
+        in_vars          ,
+        in_var_names     :: AbstractArray,
+        in_out_mapping   :: Main.Args.VarMapping,
+        times            :: AbstractArray{Float64, 1}, 
+        sampling_rate    :: NTuple{3, Float64}, 
+        out_filename     :: AbstractString,
+        mem_limit        :: Int64; 
+        z_range          :: ZRange = z_all, 
+        t_begin          :: Integer = 1, 
+        t_end            :: Integer = length(times), 
+        create_file_vars :: AbstractArray = [],
+        water_height     :: Float64 = 0.,
+        tanioka          :: Bool = false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -138,21 +135,19 @@ module Rasterization
         b_mem_simps                     = sizeof(Int32) * size(simplices, 1) * size(simplices, 2)
         b_mem_cnt                       = sizeof(UInt16)  * n_samples_x * n_samples_y
         b_mem_misc                      = 16 * 1024^2 * n_threads # 16 MiB per thread
-        b_mem_misc += n_samples_x * sizeof(Float64)
-        b_mem_misc += n_simplices * sizeof(UInt16)
+        b_mem_misc                     += n_samples_x * sizeof(Float64)
+        b_mem_misc                     += n_simplices * sizeof(UInt16)
         b_mem_per_out_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
         b_mem_per_in_var_and_timestep   = sizeof(Float64) * n_simplices
 
-        n_in_vars                       = length(in_var_names)
+        n_in_vars                       = length(in_out_mapping)
 
-        # u, v for 3d; η (eta) for surface; d for seafloor
-        out_vars_dyn = 
-            if     z_range == z_all;     [(id=1, name="u"), (id=2, name="v")]
-            elseif z_range == z_surface; [(id=1, name="eta")]
-            else                         [(id=1, name="d")] end
+        # Dict containing name=>index tuples of enumerated input/output var names
+        in_vars_dyn  = Dict(map(i_var_tup ->                i_var_tup[2]  => i_var_tup[1], enumerate(in_var_names)))
+        out_vars_dyn = Dict(map(i_var_tup -> in_out_mapping[i_var_tup[2]] => i_var_tup[1], enumerate(in_var_names)))
 
         # b for seafloor
-        out_vars_stat = if z_range == z_floor; [(id=1, name="b")] else [] end
+        out_vars_stat = if z_range == z_floor; Dict(in_out_mapping["b"]=>1) else Dict() end
 
         n_out_vars_dyn              = length(out_vars_dyn)
         n_out_vars_stat             = length(out_vars_stat)
@@ -176,59 +171,11 @@ module Rasterization
 
         n_threads = nthreads()
         println("Binning $n_simplices $s_simplex_name_plural into $(n_threads)+$(n_threads - 1)+1 buckets...")
-        println("Load balancing using the $(load_balancer == naive ? "naive" : load_balancer == count ? "count" : "workload") balancer.")
 
-        l_x_simps = zeros(Float64, n_samples_x)
+        # Assign a load factor to each x-cell. Currently just one, but dynamically calculating factors based on the simplices in each
+        # column might also be an option.
+        l_x_simps = ones(Float64, n_samples_x)
         m43_simp_points = Array{Float64, 2}(undef, (n_simplex_points, 3))
-
-        if load_balancer != naive
-            #============================================#
-            # Ignore this branch, only the naive balancer
-            # performs as desired.
-            #============================================#
-
-            for tet_id ∈ 1:n_simplices
-                simp = (@view simplices[:, tet_id])
-                for i ∈ 1:n_simplex_points, dim ∈ 1:3
-                    m43_simp_points[i, dim] = points[dim, simp[i]]
-                end
-
-                if z_range != z_all
-                    if minimum(m43_simp_points[:, 3]) > i_domain_z[2] || maximum(m43_simp_points[:, 3]) < i_domain_z[1]
-                        continue
-                    end
-                end
-
-                x_min = minimum(m43_simp_points[:, 1])
-                x_max = maximum(m43_simp_points[:, 1])
-                y_min = minimum(m43_simp_points[:, 2])
-                y_max = maximum(m43_simp_points[:, 2])
-                z_min = minimum(m43_simp_points[:, 3])
-                z_max = maximum(m43_simp_points[:, 3])
-
-                idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
-                idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
-                idx_y_min = floor(Int, (y_min - i_domain_y[1]) / sampling_rate[2]) + 1
-                idx_y_max = floor(Int, (y_max - i_domain_y[1]) / sampling_rate[2]) + 1
-                idx_z_min = floor(Int, (z_min - i_domain_z[1]) / sampling_rate[3]) + 1
-                idx_z_max = floor(Int, (z_max - i_domain_z[1]) / sampling_rate[3]) + 1
-
-                idx_x_min = max(1, min(idx_x_min, n_samples_x))
-                idx_x_max = max(1, min(idx_x_max, n_samples_x))
-
-                if load_balancer == workload
-                    aabb_volume = (idx_x_min - idx_x_min + 1) * (idx_y_max - y_min + 1) * (idx_z_max - idx_z_min + 1)
-                    # Obtained through linear regression on benchmark data
-                    estimated_workload_factor = lb_params[1] + lb_params[2] * aabb_volume
-                    l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e6 # prevent numerical inaccuracies by downscaling the values
-                elseif load_balancer == count
-                    l_x_simps[idx_x_min:idx_x_max] .+= 1e-3
-                end
-            end # for
-        else
-            # The naive balancer creates buckets of equal size by setting each column to a constant load factor
-            l_x_simps .= 1.
-        end # if load_balancer != naive
 
         # Now that each column has a load factor, size each bin such that the load is distributed evenly.
         l_bin_start_idxs = Array{Int, 1}(undef, n_threads)
@@ -338,15 +285,15 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        if !lb_autotune # LB-autotune does not write outputs
-            if create_file 
-                Main.NC.get_or_create_netcdf(out_filename; create=true,
-                                                y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-                                                x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                                t_vals=times[t_begin:t_end])
-            else
-                Main.NC.get_or_create_netcdf(out_filename)
-            end
+        if !isempty(create_file_vars) 
+            Main.NC.get_or_create_netcdf(out_filename; create=true,
+                                            y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+                                            x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+                                            t_vals=times[t_begin:t_end],
+                                            create_static_vars=keys(out_vars_stat),
+                                            create_dynamic_vars=[in_out_mapping[var] for var ∈ create_file_vars])
+        else
+            Main.NC.get_or_create_netcdf(out_filename)
         end
 
         #============================================#
@@ -428,12 +375,6 @@ module Rasterization
             # (R-partitioning)
             #============================================#
 
-            # Allocate structures needed for the load balancing autotune routine (if enabled)
-            l_tet_autotune_values :: Union{Nothing, Array{Int, 2}} = nothing
-            if lb_autotune
-                l_tet_autotune_values = fill(-1, (n_simplices, 2))
-            end
-
             # P-partitioning
             Threads.@threads for thread_id ∈ 1:n_threads
                 iterate_tets!(
@@ -444,7 +385,7 @@ module Rasterization
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -459,7 +400,7 @@ module Rasterization
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             # R-partitioning
@@ -471,33 +412,12 @@ module Rasterization
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
                 l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                tanioka=tanioka, print_progress = true, lb_autotune=l_tet_autotune_values)
+                tanioka=tanioka, print_progress = true)
 
             println("Done.")
 
             for t ∈ t_start:(t_start + n_times - 1), i ∈ size(in_vars, 2)
                 in_vars[t, i] = []
-            end
-
-            # Collect the AABB volumes and runtimes for each simplex and calculate the workload-LB params through linear regression.
-            # Currently does not deliver desirable results. Do not use.
-            if lb_autotune
-                open("linload.csv", "w+") do fp
-                    println("aabbVol;aabbTime")
-                    for i in 1:size(l_tet_autotune_values, 1)
-                        println(fp, l_tet_autotune_values[i, 1], ';', l_tet_autotune_values[i, 2])
-                    end
-                end
-                lb_params = [ones(n_simplices) l_tet_autotune_values[:, 1]] \ l_tet_autotune_values[:, 2]
-                println("==========================================")
-                println("  workload-LB params: a = $(lb_params[1]), b = $(lb_params[2])")
-                println("==========================================")
-
-                write("sampler_lb_params.txt", string(lb_params[1]), ';', string(lb_params[2]))
-
-                println()
-                println("LB-params written to file, will use them automatically from now on when --load-balancer=workload is specified.")
-                exit(0) # LB-autotune complete, kill program
             end
 
             #============================================#
@@ -536,7 +456,7 @@ module Rasterization
         v_sampling_rate,  t_start,      n_times,
         l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
         n_simplex_points, z_range;      
-        tanioka=false, print_progress=false, lb_autotune :: Union{Nothing, Array{Int, 2}} = nothing)
+        tanioka=false, print_progress=false)
 
         #============================================#
         # Pre-allocate memory used throughout
@@ -585,8 +505,6 @@ module Rasterization
                             hh.value, mm.value, ss.value)
                 end
             end # if print_progress
-
-            timeit_t_start = time_ns() # LB-autotune
 
             # Read simplex points. m43 is only filled with 3x3 values for triangles
             l_simplex = (@view l_simplices[:, tet_id])
@@ -816,14 +734,6 @@ module Rasterization
             end # if z_range
 
             n_bin_rasterized += 1
-            if !isnothing(lb_autotune)
-                timeit_time = time_ns() - timeit_t_start
-
-                lb_autotune[tet_id, 1] = n_current_cells_x * n_current_cells_y * n_current_cells_z
-                lb_autotune[tet_id, 2] = timeit_time
-
-                if n_simplex_points == 4; lb_autotune[tet_id, 1] *= n_current_cells_z; end
-            end
         end # for tet_id
     end
 
