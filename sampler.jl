@@ -18,11 +18,13 @@ using Profile
 using Printf
 using Base.Filesystem
 using Pkg
+using Base
 
+println(Base.ARGS)
 const ARGS = Args.read_args()
 
 function main()
-    
+
     sampling_rate = ARGS["sampling-rate"]
     has_3d = !isempty(ARGS["input-file-3d"])
     has_tanioka = ARGS["tanioka"]
@@ -48,7 +50,7 @@ function main()
             throw(ArgumentError("Timesteps of 2D and 3D input files do not match!"))
         end
 
-        times_3d = nothing 
+        times_3d = nothing
     end
 
     timestep_begin = 1
@@ -82,20 +84,20 @@ function main()
     end
 
     # Ensure bathymetry output
-    if !haskey(seafloor_vars, "b"); seafloor_vars["b"] = "b"; end
+    #if !haskey(seafloor_vars, "b"); seafloor_vars["b"] = "b"; end
 
-    all_out_names = [collect(values(seafloor_vars)); 
-                     surface_output ? collect(values(surface_vars)) : []; 
+    all_out_names = [collect(values(seafloor_vars));
+                     surface_output ? collect(values(surface_vars)) : [];
                      volume_output ? collect(values(volumetric_vars)) : []]
-    
+
     # b is the only static variable, this list only covers dynamic ones
-    all_out_names = filter(name -> name != seafloor_vars["b"], all_out_names)
+    #all_out_names = filter(name -> name != seafloor_vars["b"], all_out_names)
 
     in_names = collect(keys(seafloor_vars))
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars, 
-                            times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                            z_range=Rasterization.z_floor, create_file_vars=all_out_names, 
-                            t_begin=timestep_begin, t_end=timestep_end, 
+    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars,
+                            times, sampling_rate, out_filename, ARGS["memory-limit"],
+                            z_range=Rasterization.z_floor, create_file_vars=all_out_names,
+                            t_begin=timestep_begin, t_end=timestep_end,
                             water_height=water_height, tanioka=has_tanioka)
 
     GC.gc(true)
@@ -107,8 +109,8 @@ function main()
     if surface_output
         in_names = collect(keys(surface_vars))
         Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, surface_vars,
-                                times, sampling_rate, out_filename, ARGS["memory-limit"], 
-                                z_range=Rasterization.z_surface, 
+                                times, sampling_rate, out_filename, ARGS["memory-limit"],
+                                z_range=Rasterization.z_surface,
                                 t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
     end
 
@@ -136,4 +138,6 @@ println("Using $(nthreads()) threads.")
 Pkg.precompile()
 println("Done.")
 
-main()
+if !isinteractive()
+    main()
+end
