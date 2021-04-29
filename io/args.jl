@@ -99,6 +99,10 @@ module Args
             throw(ArgumentError(""""$x" has $(length(components)) components but can only have 1 or 3!"""))
         end
 
+        if length(components) == 1
+            components = [components[1], components[1], components[1]]
+        end
+
         try
             return tuple(map(x -> parse(Float64, x), components)...)
         catch
