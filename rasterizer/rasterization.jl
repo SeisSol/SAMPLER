@@ -681,18 +681,22 @@ module Rasterization
                                     #print("b:$(b) dy:$(∂b∂y)\n")
 
                                     for t ∈ 1:n_times
+                                        # TODO: Do not hardcode variable indices for U,V,W!!
                                         tanioka_offset = ∂b∂x * in_vars[tet_id, t, 2] + ∂b∂y * in_vars[tet_id, t, 3]
                                         l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1] - tanioka_offset
                                     end
                                 else
-                                    for t ∈ 1:n_times
-                                        l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1]
+                                    for index ∈ values(out_vars_dyn)
+                                        for t ∈ 1:n_times
+                                            l_dyn_grids[index][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, index]
+                                        end
                                     end
                                 end
                             elseif z_range == z_surface
-                                for t ∈ 1:n_times
-                                    η = in_vars[tet_id, t, 1]
-                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = η
+                                for index ∈ values(out_vars_dyn)
+                                    for t ∈ 1:n_times
+                                        l_dyn_grids[index][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, index]
+                                    end
                                 end
                             else # Processing triangles but neither on floor nor on surface. No use for that at the moment
                                 throw(ErrorException("Not implemented."))
