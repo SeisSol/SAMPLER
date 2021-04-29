@@ -10,6 +10,12 @@ module Args
 
     export read_args
     export Timespan
+    export VarMapping
+    export SamplingTuple
+
+
+    VarMapping      = Dict{String, String}
+    SamplingTuple   = NTuple{3, Float64}
 
     struct Timespan
         t_start :: Float64
@@ -76,11 +82,25 @@ module Args
         end
     end
 
-    function ArgParse.parse_item(::Type{NTuple{3, Float64}}, x::AbstractString)
+    function ArgParse.parse_item(::Type{VarMapping}, x::AbstractString)
+        entries = Set(split(x, ','))
+        non_mapping_entries = filter(entry -> !occursin("=>", entry), entries)
+        mapping_entries = setdiff(entries, non_mapping_entries)
+        mapping_entries = map(str -> split(str, "=>"), collect(mapping_entries))
+        entries = merge(Dict(map(str_list -> String(str_list[1]) => String(str_list[2]), mapping_entries)),
+                        Dict(map(entry -> String(entry)=>String(entry), collect(non_mapping_entries))))
+        return entries
+    end
+
+    function ArgParse.parse_item(::Type{SamplingTuple}, x::AbstractString)
         components = split(x, ',')
 
         if (length(components) ∉ [1, 3])
             throw(ArgumentError(""""$x" has $(length(components)) components but can only have 1 or 3!"""))
+        end
+
+        if length(components) == 1
+            components = [components[1], components[1], components[1]]
         end
 
         try
@@ -107,7 +127,7 @@ module Args
                 help = """The size in meters of one cell edge in the resampled output.\n
                                 \t Format: dx[,dy,dz]. If only dx is given, dy and dz will be set equal to dx.\n
                                 \t Examples: 100; 50,70,80"""
-                arg_type = NTuple{3, Float64}
+                arg_type = SamplingTuple
                 default = (100., 100., 100.)
             "--water-height"
                 help = """Some bathymetry grids place the seafloor at z = 0. Set the water height such that it matches the sea surface's z-coordinate."""
@@ -115,9 +135,37 @@ module Args
                 default = 0.
             "--memory-limit", "-m"
                 help = """The maximum amount of RAM the script should use. This is only a SOFT limit!\n
+                                \t [CAUTION] Currently, this limit is quite imprecise, do not specify more than ~half of the available RAM here!\n
                                 \t Examples: 8G; 2T; 512M\n
                                 \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
                 default = "8G"
+            "--tanioka"
+                help = """Apply Tanioka's method for converting horizontal displacements to vertical ones during rasterization.\n
+                                \t If the variables U or V are not found in --seafloor-vars, they will be added automatically."""
+                action = :store_true
+            "--seafloor-vars"
+                help = """The names of all variables that should be extracted from the 2D grid at the seafloor, separated by commas.\n
+                                \t Note that the bathymetry "b" will always be extracted from geometry. Use "b=>NewName" to rename
+                                   the output variable.\n
+                                \t [CAUTION] You cannot have the same output name for multiple variables, 
+                                   even across --seafloor-vars, --surface-vars and --volumetric-vars!\n
+                                \t Format: [M1[,M2[,...]] where Mi is either a variable name or a mapping like "W=>d".\n
+                                \t Examples: U,V,W; U,V,W=>eta; U=>X,V=>Y"""
+                arg_type = VarMapping
+                default=Dict("W"=>"d")
+            "--surface-vars"
+                help = """The names of all variables that should be extracted from the 2D grid at the sea surface, separated by commas.\n
+                                \t The same formatting rules apply as for --seafloor-vars."""
+                arg_type = VarMapping
+                default=Dict("W"=>"eta")
+            "--volumetric-vars"
+                help = """The names of all variables that should be extracted from the 3D grid, separated by commas.\n
+                \t The same formatting rules apply as for --seafloor-vars."""
+                arg_type = VarMapping
+                default=Dict("u"=>"u", "v"=>"v")
+            "--seafloor-only"
+                help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
+                action = :store_true
             "--load-balancer"
                 help = """The static load balancer to choose when assigning simplices to threads. Options are:\n
                                 \t naive: Every thread works on a bin that is |D| / n_threads in size\n
@@ -128,9 +176,6 @@ module Args
             "--lb-autotune"
                 help = """[DO NOT USE] Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
                     The found parameters will be saved automatically and the workload-LB can then be used."""
-                action = :store_true
-            "--kajiura"
-                help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
                 action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."

@@ -6,4 +6,8 @@
 *.csv
 *.txt
 *.out
+*.tmp
+*.h5
+*.xdmf
+*.xmf
 profile.txt

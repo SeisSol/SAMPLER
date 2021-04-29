@@ -14,11 +14,12 @@ module Rasterization
     using Profile
     using Main.Util
     using Main.NC
+    using Main.Args
+    using Infiltrator
 
     export rasterize, ZRange
 
     @enum ZRange z_all=-1 z_floor=0 z_surface=1
-    @enum LoadBalancer naive=0 count=1 workload=2
 
     struct HesseNormalForm
         n0  :: NTuple{3, Float64}
@@ -32,42 +33,41 @@ module Rasterization
         Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
 
     # Arguments
-    - `simplices`:      Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
-    - `points`:         Each column consists of an x-, y- and z-coordinate representing a point in 3D space
-    - `in_vars`:        A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays 
-                        and each of those arrays contains the variable value for each simplex (in the same order)
-    - `in_var_names`:   The names, of the variables in `in_vars` in the same order as those vars
-    - `times`:          An array of timestamps associated to the timesteps
-    - `sampling_rate`:  A tuple (Δx, Δy, Δz) defining the regular grid cell size.
-    - `out_filename`:   The path/name of the output NetCDF file
-    - `mem_limit`:      The soft memory (in bytes) the software is allowed to utilize (soft limit!)
-    - `z_range`:        A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`, 
-                        `z_surface` discards everything below. `z_all` keeps all simplices.
-    - `t_begin`:        The first timestep to be rasterized
-    - `t_end`:          The last timestep to be rasterized
-    - `create_file`:    If `true`: create output file (already existing file will be overwritten). Else: use existing output file.
-    - `load_balancer`:  The load balancer to be used.
-    - `lb_params`:      The parameters for the workload-LB as obtained by the autotuning procedure
-    - `lb_autotune`:    Whether to run the autotune procedure for the workload-LB. Only runs the first iteration of the rasterization.
-    - `water_height`:   The offset to translate the water level to be at `z=0`.
+    - `simplices`:        Each column consists of 3 or 4 point indices representing a triangle/tetrahedron
+    - `points`:           Each column consists of an x-, y- and z-coordinate representing a point in 3D space
+    - `in_vars`:          A 2D array of arrays. Each column corresponds to one variable and contains `size(times)` arrays
+                          and each of those arrays contains the variable value for each simplex (in the same order)
+    - `in_var_names`:     The names, of the variables in `in_vars` in the same order as those vars
+    - `in_out_mapping`:   A dictionary providing the output variable name for each input variable name
+    - `times`:            An array of timestamps associated to the timesteps
+    - `sampling_rate`:    A tuple (Δx, Δy, Δz) defining the regular grid cell size.
+    - `out_filename`:     The path/name of the output NetCDF file
+    - `mem_limit`:        The soft memory (in bytes) the software is allowed to utilize (soft limit!)
+    - `z_range`:          A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`,
+                          `z_surface` discards everything below. `z_all` keeps all simplices.
+    - `t_begin`:          The first timestep to be rasterized
+    - `t_end`:            The last timestep to be rasterized
+    - `create_file_vars`: If not empty: create output file containing the var names in the list (already existing file will be overwritten).
+                          Else: use existing output file.
+    - `water_height`:     The offset to translate the water level to be at `z=0`.
+    - `tanioka`:          Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
     """
     function rasterize(
-        simplices       :: AbstractArray{INDEX_TYPE, 2}, 
-        points          :: AbstractArray{Float64, 2},
-        in_vars         ,
-        in_var_names    :: AbstractArray,
-        times           :: AbstractArray{Float64, 1}, 
-        sampling_rate   :: NTuple{3, Float64}, 
-        out_filename    :: AbstractString,
-        mem_limit       :: Int64; 
-        z_range         :: ZRange = z_all, 
-        t_begin         :: Integer = 1, 
-        t_end           :: Integer = length(times), 
-        create_file     :: Bool = false, 
-        load_balancer   :: LoadBalancer = naive,
-        lb_params       :: NTuple{2, Float64} = (0., 0.),
-        lb_autotune     :: Bool = false,
-        water_height    :: Float64 = 0.) where INDEX_TYPE <: Integer
+        simplices        :: AbstractArray{INDEX_TYPE, 2},
+        points           :: AbstractArray{Float64, 2},
+        in_vars          ,
+        in_var_names     :: AbstractArray,
+        in_out_mapping   :: Main.Args.VarMapping,
+        times            :: AbstractArray{Float64, 1},
+        sampling_rate    :: NTuple{3, Float64},
+        out_filename     :: AbstractString,
+        mem_limit        :: Int64;
+        z_range          :: ZRange = z_all,
+        t_begin          :: Integer = 1,
+        t_end            :: Integer = length(times),
+        create_file_vars :: AbstractArray = [],
+        water_height     :: Float64 = 0.,
+        tanioka          :: Bool = false) where INDEX_TYPE <: Integer
 
         #============================================#
         # Code style & conventions
@@ -136,32 +136,30 @@ module Rasterization
         b_mem_simps                     = sizeof(Int32) * size(simplices, 1) * size(simplices, 2)
         b_mem_cnt                       = sizeof(UInt16)  * n_samples_x * n_samples_y
         b_mem_misc                      = 16 * 1024^2 * n_threads # 16 MiB per thread
-        b_mem_misc += n_samples_x * sizeof(Float64)
-        b_mem_misc += n_simplices * sizeof(UInt16)
+        b_mem_misc                     += n_samples_x * sizeof(Float64)
+        b_mem_misc                     += n_simplices * sizeof(UInt16)
         b_mem_per_out_var_and_timestep  = sizeof(Float64) * n_samples_x * n_samples_y
         b_mem_per_in_var_and_timestep   = sizeof(Float64) * n_simplices
 
-        n_in_vars                       = length(in_var_names)
+        n_in_vars                       = length(in_out_mapping)
 
-        # u, v for 3d; η (eta) for surface; d for seafloor
-        out_vars_dyn = 
-            if     z_range == z_all;     [(id=1, name="u"), (id=2, name="v")]
-            elseif z_range == z_surface; [(id=1, name="eta")]
-            else                         [(id=1, name="d")] end
+        # Dict containing name=>index tuples of enumerated input/output var names
+        in_vars_dyn  = Dict(map(i_var_tup ->                i_var_tup[2]  => i_var_tup[1], enumerate(in_var_names)))
+        out_vars_dyn = Dict(map(i_var_tup -> in_out_mapping[i_var_tup[2]] => i_var_tup[1], enumerate(in_var_names)))
 
         # b for seafloor
-        out_vars_stat = if z_range == z_floor; [(id=1, name="b")] else [] end
+        out_vars_stat = if z_range == z_floor; Dict("b"=>1) else Dict() end
 
         n_out_vars_dyn              = length(out_vars_dyn)
         n_out_vars_stat             = length(out_vars_stat)
 
         n_timesteps                 = t_end - t_begin + 1
-        n_timesteps_per_iteration   = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep) 
+        n_timesteps_per_iteration   = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep)
             ÷ (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
         n_timesteps_per_iteration   = max(1, n_timesteps_per_iteration) # Process at least 1 timestep
 
         n_iterations                = ceil(Int, n_timesteps / n_timesteps_per_iteration)
-        
+
         n_total_problems            = n_timesteps * n_simplices
 
         s_simplex_name              = n_dims == 3 ? "tetrahedron" : "triangle"
@@ -174,59 +172,11 @@ module Rasterization
 
         n_threads = nthreads()
         println("Binning $n_simplices $s_simplex_name_plural into $(n_threads)+$(n_threads - 1)+1 buckets...")
-        println("Load balancing using the $(load_balancer == naive ? "naive" : load_balancer == count ? "count" : "workload") balancer.")
 
-        l_x_simps = zeros(Float64, n_samples_x)
+        # Assign a load factor to each x-cell. Currently just one, but dynamically calculating factors based on the simplices in each
+        # column might also be an option.
+        l_x_simps = ones(Float64, n_samples_x)
         m43_simp_points = Array{Float64, 2}(undef, (n_simplex_points, 3))
-
-        if load_balancer != naive
-            #============================================#
-            # Ignore this branch, only the naive balancer
-            # performs as desired.
-            #============================================#
-
-            for tet_id ∈ 1:n_simplices
-                simp = (@view simplices[:, tet_id])
-                for i ∈ 1:n_simplex_points, dim ∈ 1:3
-                    m43_simp_points[i, dim] = points[dim, simp[i]]
-                end
-
-                if z_range != z_all
-                    if minimum(m43_simp_points[:, 3]) > i_domain_z[2] || maximum(m43_simp_points[:, 3]) < i_domain_z[1]
-                        continue
-                    end
-                end
-
-                x_min = minimum(m43_simp_points[:, 1])
-                x_max = maximum(m43_simp_points[:, 1])
-                y_min = minimum(m43_simp_points[:, 2])
-                y_max = maximum(m43_simp_points[:, 2])
-                z_min = minimum(m43_simp_points[:, 3])
-                z_max = maximum(m43_simp_points[:, 3])
-
-                idx_x_min = floor(Int, (x_min - i_domain_x[1]) / sampling_rate[1]) + 1
-                idx_x_max = floor(Int, (x_max - i_domain_x[1]) / sampling_rate[1]) + 1
-                idx_y_min = floor(Int, (y_min - i_domain_y[1]) / sampling_rate[2]) + 1
-                idx_y_max = floor(Int, (y_max - i_domain_y[1]) / sampling_rate[2]) + 1
-                idx_z_min = floor(Int, (z_min - i_domain_z[1]) / sampling_rate[3]) + 1
-                idx_z_max = floor(Int, (z_max - i_domain_z[1]) / sampling_rate[3]) + 1
-
-                idx_x_min = max(1, min(idx_x_min, n_samples_x))
-                idx_x_max = max(1, min(idx_x_max, n_samples_x))
-
-                if load_balancer == workload
-                    aabb_volume = (idx_x_min - idx_x_min + 1) * (idx_y_max - y_min + 1) * (idx_z_max - idx_z_min + 1)
-                    # Obtained through linear regression on benchmark data
-                    estimated_workload_factor = lb_params[1] + lb_params[2] * aabb_volume
-                    l_x_simps[idx_x_min:idx_x_max] .+= estimated_workload_factor / 1e6 # prevent numerical inaccuracies by downscaling the values
-                elseif load_balancer == count
-                    l_x_simps[idx_x_min:idx_x_max] .+= 1e-3
-                end
-            end # for
-        else
-            # The naive balancer creates buckets of equal size by setting each column to a constant load factor
-            l_x_simps .= 1.
-        end # if load_balancer != naive
 
         # Now that each column has a load factor, size each bin such that the load is distributed evenly.
         l_bin_start_idxs = Array{Int, 1}(undef, n_threads)
@@ -336,15 +286,15 @@ module Rasterization
         # Set up NetCDF output file
         #============================================#
 
-        if !lb_autotune # LB-autotune does not write outputs
-            if create_file 
-                Main.NC.get_or_create_netcdf(out_filename; create=true,
-                                                y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
-                                                x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
-                                                t_vals=times[t_begin:t_end])
-            else
-                Main.NC.get_or_create_netcdf(out_filename)
-            end
+        if !isempty(create_file_vars)
+            Main.NC.get_or_create_netcdf(out_filename; create=true,
+                                            y_vals=[i_domain_y[1] + i * sampling_rate[2] for i ∈ 1:n_samples_y],
+                                            x_vals=[i_domain_x[1] + i * sampling_rate[1] for i ∈ 1:n_samples_x],
+                                            t_vals=times[t_begin:t_end],
+                                            create_static_vars=collect(keys(out_vars_stat)),
+                                            create_dynamic_vars=create_file_vars)
+        else
+            Main.NC.get_or_create_netcdf(out_filename)
         end
 
         #============================================#
@@ -353,13 +303,13 @@ module Rasterization
 
         # These are the grids that will be written to the NetCDF output later on.
         l_dyn_output_grids = Array{Array{Float64, 3}, 1}(undef, n_out_vars_dyn)
-        for var ∈ out_vars_dyn
-            l_dyn_output_grids[var.id] = Array{Float64, 3}(undef, (n_samples_x, n_samples_y, n_timesteps_per_iteration))
+        for index ∈ values(out_vars_dyn)
+            l_dyn_output_grids[index] = Array{Float64, 3}(undef, (n_samples_x, n_samples_y, n_timesteps_per_iteration))
         end
 
         l_stat_output_grids = Array{Array{Float64, 2}, 1}(undef, n_out_vars_stat)
-        for var ∈ out_vars_stat
-            l_stat_output_grids[var.id] = Array{Float64, 2}(undef, (n_samples_x, n_samples_y))
+        for index ∈ values(out_vars_stat)
+            l_stat_output_grids[index] = Array{Float64, 2}(undef, (n_samples_x, n_samples_y))
         end
 
         # This matrix counts the total number of samples in each output grid cell
@@ -372,13 +322,13 @@ module Rasterization
         #============================================#
 
         println("Processing timesteps ", t_begin-1, "-", t_end-1, " of 0-", length(times)-1, ".")
-        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ", 
-                n_timesteps_per_iteration, " timesteps at once (therefore needing ", 
+        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ",
+                n_timesteps_per_iteration, " timesteps at once (therefore needing ",
                 n_iterations , " iterations).")
 
         # In each iteration, process ALL tetrahedra for ALL variables for as many timesteps as possible*
-        # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of 
-        # timesteps that can be stored in l_iter_output_grids. 
+        # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
+        # timesteps that can be stored in l_iter_output_grids.
         for iteration ∈ 1:n_iterations
             t_start = t_begin + (iteration - 1) * n_timesteps_per_iteration
             n_times = min(n_timesteps - (iteration - 1) * n_timesteps_per_iteration, n_timesteps_per_iteration)
@@ -391,12 +341,10 @@ module Rasterization
             #============================================#
 
             prefetched_vars = Array{Float64, 3}(undef, (n_simplices, n_times, n_in_vars))
-            @profile begin
-                for var_id ∈ 1:n_in_vars, time ∈ t_start:t_start + n_times - 1
-                    dest_offset = (var_id-1)*n_times*n_simplices + (time-t_start)*n_simplices + 1
-                    copyto!(prefetched_vars, dest_offset, in_vars[time, var_id], 1, n_simplices)
-                end
-            end # profile
+            for var_id ∈ 1:n_in_vars, time ∈ t_start:t_start + n_times - 1
+                dest_offset = (var_id-1)*n_times*n_simplices + (time-t_start)*n_simplices + 1
+                copyto!(prefetched_vars, dest_offset, in_vars[time, var_id], 1, n_simplices)
+            end
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
             for grid ∈ l_dyn_output_grids
@@ -426,23 +374,17 @@ module Rasterization
             # (R-partitioning)
             #============================================#
 
-            # Allocate structures needed for the load balancing autotune routine (if enabled)
-            l_tet_autotune_values :: Union{Nothing, Array{Int, 2}} = nothing
-            if lb_autotune
-                l_tet_autotune_values = fill(-1, (n_simplices, 2))
-            end
-
             # P-partitioning
             Threads.@threads for thread_id ∈ 1:n_threads
                 iterate_tets!(
                     thread_id,         l_bin_ids,    l_bin_counts,
-                    n_simplices,       simplices,    points, 
+                    n_simplices,       simplices,    points,
                     prefetched_vars,   out_vars_dyn, out_vars_stat,
                     i_domain_x,        i_domain_y,   i_domain_z,
                     n_samples_x,       n_samples_y,  n_samples_z,
                     sampling_rate,     t_start,      n_times,
                     l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
-                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             println("Processing $s_simplex_name_plural on bucket borders...")
@@ -451,25 +393,25 @@ module Rasterization
             Threads.@threads for thread_id ∈ 1:n_threads-1
                 iterate_tets!(
                     n_threads + thread_id, l_bin_ids,    l_bin_counts,
-                    n_simplices,           simplices,    points, 
+                    n_simplices,           simplices,    points,
                     prefetched_vars,       out_vars_dyn, out_vars_stat,
                     i_domain_x,            i_domain_y,   i_domain_z,
                     n_samples_x,           n_samples_y,  n_samples_z,
                     sampling_rate,         t_start,      n_times,
-                    l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                    print_progress = (thread_id == n_threads ÷ 2), lb_autotune=l_tet_autotune_values)
+                    l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
+                    tanioka=tanioka, print_progress = (thread_id == n_threads ÷ 2))
             end # for thread_id
 
             # R-partitioning
             iterate_tets!(
                 2 * n_threads,     l_bin_ids,    l_bin_counts,
-                n_simplices,       simplices,    points, 
+                n_simplices,       simplices,    points,
                 prefetched_vars,   out_vars_dyn, out_vars_stat,
                 i_domain_x,        i_domain_y,   i_domain_z,
                 n_samples_x,       n_samples_y,  n_samples_z,
                 sampling_rate,     t_start,      n_times,
-                l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range, 
-                print_progress = true, lb_autotune=l_tet_autotune_values)
+                l_dyn_output_grids, l_stat_output_grids, myx_output_sample_counts, n_simplex_points, z_range,
+                tanioka=tanioka, print_progress = true)
 
             println("Done.")
 
@@ -477,46 +419,25 @@ module Rasterization
                 in_vars[t, i] = []
             end
 
-            # Collect the AABB volumes and runtimes for each simplex and calculate the workload-LB params through linear regression.
-            # Currently does not deliver desirable results. Do not use.
-            if lb_autotune
-                open("linload.csv", "w+") do fp
-                    println("aabbVol;aabbTime")
-                    for i in 1:size(l_tet_autotune_values, 1)
-                        println(fp, l_tet_autotune_values[i, 1], ';', l_tet_autotune_values[i, 2])
-                    end
-                end
-                lb_params = [ones(n_simplices) l_tet_autotune_values[:, 1]] \ l_tet_autotune_values[:, 2]
-                println("==========================================")
-                println("  workload-LB params: a = $(lb_params[1]), b = $(lb_params[2])")
-                println("==========================================")
-
-                write("sampler_lb_params.txt", string(lb_params[1]), ';', string(lb_params[2]))
-
-                println()
-                println("LB-params written to file, will use them automatically from now on when --load-balancer=workload is specified.")
-                exit(0) # LB-autotune complete, kill program
-            end
-
             #============================================#
             # Write NetCDF outputs for this iteration
             #============================================#
 
             println("Writing outputs for timesteps $(t_start-1)-$(t_start+n_times-2)...")
-            
+
             start = [1, 1, (t_start-t_begin)+1]
             count = [-1, -1, n_times]
 
-            for var ∈ out_vars_dyn
-                ncwrite(l_dyn_output_grids[var.id], out_filename, var.name, start=start, count=count)
+            for (name, index) ∈ out_vars_dyn
+                ncwrite(l_dyn_output_grids[index], out_filename, name, start=start, count=count)
             end
 
             if iteration == 1 # Only write static outputs once
-                for var ∈ out_vars_stat
-                    if var.name == "b" # Water height correction
-                        l_stat_output_grids[var.id] .-= water_height
+                for (name, index) ∈ out_vars_stat
+                    if name == "b" # Water height correction
+                        l_stat_output_grids[index] .-= water_height
                     end
-                    ncwrite(l_stat_output_grids[var.id], out_filename, var.name, start=[1, 1], count=[-1, -1])
+                    ncwrite(l_stat_output_grids[index], out_filename, name, start=[1, 1], count=[-1, -1])
                 end
             end
 
@@ -526,29 +447,30 @@ module Rasterization
     end # function rasterize
 
     function iterate_tets!(
-        bin_id,           l_bin_ids,    l_bin_counts, 
-        n_tetrahedra,     l_simplices, l_points, 
+        bin_id,           l_bin_ids,    l_bin_counts,
+        n_tetrahedra,     l_simplices,  l_points,
         in_vars,          out_vars_dyn, out_vars_stat,
         i_domain_x,       i_domain_y,   i_domain_z,
         n_samples_x,      n_samples_y,  n_samples_z,
         v_sampling_rate,  t_start,      n_times,
-        l_dyn_grids,      l_stat_grids, myx_grid_sample_counts, 
-        n_simplex_points, z_range;      print_progress=false, lb_autotune :: Union{Nothing, Array{Int, 2}} = nothing)
+        l_dyn_grids,      l_stat_grids, myx_grid_sample_counts,
+        n_simplex_points, z_range;
+        tanioka=false, print_progress=false)
 
         #============================================#
         # Pre-allocate memory used throughout
         # rasterization by this thread
         #============================================#
 
-        m43_simp_points      = Array{Float64, 2}(undef, (n_simplex_points, 3))
+        m43_simp_points     = Array{Float64, 2}(undef, (n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
         l_face_points       = Array{SubArray, 1}(undef, n_simplex_points)
         l_tet_faces         = Array{HesseNormalForm, 1}(undef, n_simplex_points)
-        
+
         v_p                 = Array{Float64, 1}(undef, 3)
         v_n                 = Array{Float64, 1}(undef, 3)
-        simp_sample_counts   = Array{UInt16, 2}(undef, (64, 64))
-        
+        simp_sample_counts  = Array{UInt16, 2}(undef, (64, 64))
+
         d_start             = now()
         d_last_printed      = d_start
         print_interval      = Second(2)
@@ -583,8 +505,6 @@ module Rasterization
                 end
             end # if print_progress
 
-            timeit_t_start = time_ns() # LB-autotune
-
             # Read simplex points. m43 is only filled with 3x3 values for triangles
             l_simplex = (@view l_simplices[:, tet_id])
             for i ∈ 1:n_simplex_points, dim ∈ 1:3
@@ -608,7 +528,7 @@ module Rasterization
             idx_g_x_min = floor(Int32, (m32_tet_aabb[1,1] - i_domain_x[1]) / v_sampling_rate[1]) + 1
             idx_g_y_min = floor(Int32, (m32_tet_aabb[2,1] - i_domain_y[1]) / v_sampling_rate[2]) + 1
             idx_g_z_min = floor(Int32, (m32_tet_aabb[3,1] - i_domain_z[1]) / v_sampling_rate[3]) + 1
-     
+
             idx_g_x_max =  ceil(Int32, (m32_tet_aabb[1,2] - i_domain_x[1]) / v_sampling_rate[1])
             idx_g_y_max =  ceil(Int32, (m32_tet_aabb[2,2] - i_domain_y[1]) / v_sampling_rate[2])
             idx_g_z_max = floor(Int32, (m32_tet_aabb[3,2] - i_domain_z[1]) / v_sampling_rate[3]) + 1
@@ -633,7 +553,7 @@ module Rasterization
 
             for i ∈ 1:n_simplex_points
                 # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
-                # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes, 
+                # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes,
                 # it is inside the tetrahedron.
                 # Analogous for triangles but the fourth point is placed straight above the third one which
                 # allows the usage of the same point-in-simplex code afterwards.
@@ -641,18 +561,18 @@ module Rasterization
                 v_p1 =     l_face_points[( i    % n_simplex_points) + 1]
                 v_p2 =     l_face_points[((i+1) % n_simplex_points) + 1]
 
-                v_p3 = 
+                v_p3 =
                     if n_simplex_points == 4; l_face_points[((i+2) % n_simplex_points) + 1]
                     elseif n_simplex_points == 3; [v_p1[1], v_p1[2], v_p1[3] + 1.]
                     else throw(DimensionMismatch("Only simplices with 3 or 4 points (read: triangles / tetrahedra) are supported."))
                     end
-            
+
                 # Calculate Hesse normal form of the plane defined by p1, p2, p3
                 # Normal vector
                 cross3!(v_p2-v_p1, v_p3-v_p1, v_n)
                 n_simplex_points == 3 && @assert (v_n[3] == 0.) "Normal vector of 2D line has non-zero z component!"
                 normalize!(v_n)
-            
+
                 # n1x1 + n2x2 + n3x3 + d = 0; solve for d
                 d = -dot3(v_p1, v_n)
                 dist_p_excl = dot3(v_p_excl, v_n) + d
@@ -671,30 +591,30 @@ module Rasterization
                 # For each tetrahedron face, filter out cells that are not in the tetrahedron
                 for i ∈ 1:n_simplex_points
                     face = l_tet_faces[i]
-                    # p_excl is ALWAYS on the "positive" side of the plane. 
+                    # p_excl is ALWAYS on the "positive" side of the plane.
                     # So, if p_excl and p lie on the same side, p is inside the tetrahedron
                     dist_p = dot3(v_p, face.n0) + face.d
-                
+
                     # The point lies approx. ON the face, reject in the tet on the lexicographically
                     # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
                     # only accepted for one of them.
-                    # Def.: lexicographical order: 
+                    # Def.: lexicographical order:
                     #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
                     # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
                     # normal vector in contrast to its negated counterpart.
-                    if (abs(dist_p) <= EDGE_TOL) 
-                        is_positive_side = 
-                            (face.n0[1] > 0.) || 
-                            (face.n0[1] == 0. && face.n0[2] > 0.) || 
+                    if (abs(dist_p) <= EDGE_TOL)
+                        is_positive_side =
+                            (face.n0[1] > 0.) ||
+                            (face.n0[1] == 0. && face.n0[2] > 0.) ||
                             (face.n0[1] == 0. && face.n0[2] == 0. && face.n0[3] > 0.)
-                    
+
                         # Reject if in tetrahedron on face's lex. negative side
                         if !is_positive_side
                             accepted = false
                             break
                         end
                     end
-                
+
                     # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
                     # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
                     # Therefore, we only need to check if dist_p is negative to reject p.
@@ -708,7 +628,7 @@ module Rasterization
             end
 
             #============================================#
-            # Sample each cuboid that is overlapping the 
+            # Sample each cuboid that is overlapping the
             # current simplex's AABB.
             # If its CENTER POINT lies within the simp,
             # increase the simp's sample count for the
@@ -740,17 +660,43 @@ module Rasterization
                                     v_λ = bary_coords_2d(v_p, m43_simp_points)
 
                                     # Calculate bathymetry height from triangle's z-coords and interpolate between them
-                                    b = sum(m43_simp_points[1:3,3] .* v_λ) / 3.
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
                                     l_stat_grids[1][idx_g_x, idx_g_y] = b
+                                    #println("b: $(b), p: $(m43_simp_points[1:3,3]), v_λ: $(v_λ)\n")
                                 end
 
-                                for t ∈ 1:n_times
-                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1]
+                                tanioka_offset = 0.
+
+                                if tanioka
+                                    # ∂b/∂x
+                                    v_λ = bary_coords_2d(v_p .+ (1., 0., 0.), m43_simp_points)
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
+                                    ∂b∂x = b - l_stat_grids[1][idx_g_x, idx_g_y]
+                                    #print("b:$(b) dx:$(∂b∂x) | ")
+
+                                    # ∂b/∂y
+                                    v_λ = bary_coords_2d(v_p .+ (0., 1., 0.), m43_simp_points)
+                                    b = sum(m43_simp_points[1:3,3] .* v_λ)
+                                    ∂b∂y = b - l_stat_grids[1][idx_g_x, idx_g_y]
+                                    #print("b:$(b) dy:$(∂b∂y)\n")
+
+                                    for t ∈ 1:n_times
+                                        # TODO: Do not hardcode variable indices for U,V,W!!
+                                        tanioka_offset = ∂b∂x * in_vars[tet_id, t, 2] + ∂b∂y * in_vars[tet_id, t, 3]
+                                        l_dyn_grids[1][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, 1] - tanioka_offset
+                                    end
+                                else
+                                    for index ∈ values(out_vars_dyn)
+                                        for t ∈ 1:n_times
+                                            l_dyn_grids[index][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, index]
+                                        end
+                                    end
                                 end
                             elseif z_range == z_surface
-                                for t ∈ 1:n_times
-                                    η = in_vars[tet_id, t, 1]
-                                    l_dyn_grids[1][idx_g_x, idx_g_y, t] = η
+                                for index ∈ values(out_vars_dyn)
+                                    for t ∈ 1:n_times
+                                        l_dyn_grids[index][idx_g_x, idx_g_y, t] = in_vars[tet_id, t, index]
+                                    end
                                 end
                             else # Processing triangles but neither on floor nor on surface. No use for that at the moment
                                 throw(ErrorException("Not implemented."))
@@ -764,7 +710,7 @@ module Rasterization
 
             #============================================#
             # All cuboids overlapping the tet's domain
-            # have been sampled, 
+            # have been sampled,
             # now calculate the running average of each
             # (x, y) output grid cell with the newly gained
             # samples.
@@ -780,10 +726,10 @@ module Rasterization
                     if num_samples > 0
                         idx_g_x = idx_l_x + idx_g_x_min - 1; idx_g_y = idx_l_y + idx_g_y_min - 1
                         total_samples = (myx_grid_sample_counts[idx_g_x, idx_g_y] += num_samples) # x, y flip intentional.
-                        for var ∈ out_vars_dyn
+                        for index ∈ values(out_vars_dyn)
                             for t ∈ 1:n_times
-                                avg = l_dyn_grids[var.id][idx_g_x, idx_g_y, t] # x, y flip intentional
-                                l_dyn_grids[var.id][idx_g_x, idx_g_y, t] = avg + (in_vars[tet_id, t, var.id]-avg)*(num_samples/total_samples)
+                                avg = l_dyn_grids[index][idx_g_x, idx_g_y, t] # x, y flip intentional
+                                l_dyn_grids[index][idx_g_x, idx_g_y, t] = avg + (in_vars[tet_id, t, index]-avg)*(num_samples/total_samples)
                             end
                         end
                     end
@@ -791,14 +737,6 @@ module Rasterization
             end # if z_range
 
             n_bin_rasterized += 1
-            if !isnothing(lb_autotune)
-                timeit_time = time_ns() - timeit_t_start
-
-                lb_autotune[tet_id, 1] = n_current_cells_x * n_current_cells_y * n_current_cells_z
-                lb_autotune[tet_id, 2] = timeit_time
-
-                if n_simplex_points == 4; lb_autotune[tet_id, 1] *= n_current_cells_z; end
-            end
         end # for tet_id
     end
 
