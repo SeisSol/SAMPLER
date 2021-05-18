@@ -98,21 +98,13 @@ module Rasterization
         #============================================#
 
         if z_range != z_all
-            s_z_range = nothing
-
             if z_range == z_floor
-                if i_domain_z[1] == i_domain_z[2]
-                    i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
-                else
-                    i_domain_z = (i_domain_z[1] - Z_RANGE_TOL, i_domain_z[2] - Z_RANGE_TOL)
-                end
                 s_region = "floor"
             else # if z == z_surface
-                i_domain_z = (i_domain_z[2] - Z_RANGE_TOL, i_domain_z[2] + Z_RANGE_TOL)
                 s_region = "surface"
             end
 
-            println("Only processing triangles on the ", s_region, " (z-domain limited to ", i_domain_z, ").")
+            println("Only processing triangles on the $s_region.")
         end
 
         n_samples_x = ceil(Int, (i_domain_x[end] - i_domain_x[1]) / sampling_rate[1])
@@ -220,14 +212,14 @@ module Rasterization
 
                 # Simplex is not in the z-domain (only possible if z_range ∈ [z_floor, z_surface]), ignore it.
                 if z_range != z_all
-                    coord_z_min = minimum(m43_tet_points[:, 3])
-                    coord_z_max = maximum(m43_tet_points[:, 3])
+                    is_bath = is_bathy(m43_tet_points, water_height)
 
-                    if coord_z_min > i_domain_z[2] || coord_z_max < i_domain_z[1]
+                    if (z_range == z_floor) != is_bath
                         l_bin_ids[tet_id] = n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
                 else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
+                    # TODO: correct z filter for tetrahedra
                     coord_z_min = minimum(m43_tet_points[:, 3])
                     coord_z_max = maximum(m43_tet_points[:, 3])
                     if coord_z_max <= 0.00001
@@ -738,6 +730,27 @@ module Rasterization
 
             n_bin_rasterized += 1
         end # for tet_id
+    end
+
+    """
+    Checks if the given triangle belongs to the bathymetry mesh.
+        This is done as follows:
+        If the triangle is not parallel to the xy-plane (different z-coords for at least one of the points), it belongs to bathymetry.
+        If the triangle is parallel to the xy-plane but not at water height, then it also belongs to bathymetry.
+        Otherwise, it does not belong to bathymetry.
+
+    # Arguments
+    - `triangle_points`:    The 2D array of triangle point coords (each column consists of x, y, and z coord)
+    - `water_height`:       The water height as a number
+    """
+    @inline function is_bathy(triangle_points, water_height = 0.)
+        min = minimum(triangle_points[:, 3])
+        if abs(min - water_height) > 1e-8; return true; end # Check height condition
+
+        max = maximum(triangle_points[:, 3])
+        if abs(max - min) > 1e-8; return true; end # Check flatness condition
+
+        return false
     end
 
     """
