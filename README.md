@@ -11,7 +11,7 @@ Then, in the command line, type:
 
     julia
     ]
-    add NetCDF Interpolations FFTW ArgParse XMLDict
+    add NetCDF Interpolations FFTW ArgParse XMLDict HDF5
     ←
     exit()
 
@@ -22,7 +22,7 @@ Note: The `julia` command might not be available right after installation and yo
 
 Afterwards, clone the SAMPLER repository to your machine (if you read this on the machine, you have already completed this step!):
 
-    git clone https://gitlab.lrz.de/ge73tes/sampler
+    git clone https://github.com/SeisSol/SAMPLER.git
 
 Note: In the following it is assumed that `path/to/sampler` is the installation path (the sampler folder contains this README.md file). 
 
