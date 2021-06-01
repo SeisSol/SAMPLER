@@ -3,7 +3,7 @@ module XDMF
     using Mmap
     using HDF5
 
-    export grid_of, data_of
+    export XDMFFile, timesteps_of, grid_of, data_of
 
     struct XDMFFile
         xml         :: XMLDict.XMLDictElement
@@ -11,14 +11,11 @@ module XDMF
         timesteps   :: Array{XMLDict.XMLDictElement,1}
     end
 
-    function timesteps_of(file_path::AbstractString)
-        xdmf = XDMFFile(file_path)
+    function timesteps_of(xdmf::XDMFFile) :: Array{Float64, 1}
         return map(data_item -> parse(Float64, data_item["Time"][:Value]), xdmf.timesteps)
     end
 
-    function grid_of(file_path::AbstractString)
-        xdmf = XDMFFile(file_path)
-
+    function grid_of(xdmf::XDMFFile) :: Tuple{AbstractArray{Integer, 2}, AbstractArray{AbstractFloat, 2}}
         # Memory-map geometry (points) and topology (simplices (triangles/tetrahedra)) files.
         # Since the ids of the points referred to in topo_item start at 0 (and Julia counts from 1) we have to add 1.
         simplices = mmap_data_item(xdmf.timesteps[1]["Topology"]["DataItem"], xdmf.base_path) .+ 1
@@ -27,21 +24,29 @@ module XDMF
         return (simplices, points)
     end
 
-    function data_of(file_path::AbstractString, var_names...)
-        xdmf = XDMFFile(file_path)
+    function data_of(xdmf::XDMFFile, timestep_start, timestep_stop, var_names)
 
-        ret_array = Array{AbstractArray, 2}(undef, (length(xdmf.timesteps), length(var_names)))
-        for (var_id, var_name) ∈ enumerate(var_names), t ∈ 1:length(xdmf.timesteps)
-            timestep_attrs = xdmf.timesteps[t]["Attribute"]
+        if timestep_start < 1 
+            error("Start timestep $(timestep_start) is smaller than 1.")
+        elseif timestep_stop < timestep_start 
+            error("End timestep $(timestep_stop) is smaller than start timestep $(timestep_start).")
+        elseif timestep_stop > length(xdmf.timesteps)
+            error("End timestep $(timestep_stop) exceeds number of timesteps in XDMF file ($(length(xdmf.timesteps))).")
+        end
+
+        n_timesteps = timestep_stop - timestep_start + 1
+        ret_dict = Dict{AbstractString, Array{AbstractArray, 1}}([(var_name, Array{AbstractArray, 1}(undef, n_timesteps)) for var_name ∈ var_names])
+        for var_name ∈ var_names, t ∈ 1:n_timesteps
+            timestep_attrs = xdmf.timesteps[t + timestep_start - 1]["Attribute"]
             for i ∈ 1:length(timestep_attrs)
                 if timestep_attrs[i][:Name] == var_name
-                    ret_array[t, var_id] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
+                    ret_dict[var_name][t] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
                     break
                 end
             end
         end
 
-        return ret_array
+        return ret_dict
     end
 
     function XDMFFile(file_path::AbstractString)
@@ -80,7 +85,6 @@ module XDMF
         @assert range_item[:Dimensions] == "3 2"
         @assert binary_item[:Format] ∈ ["Binary", "HDF"]
 
-        target_dims = parse(UInt, data_item[:Dimensions])
         hyperslab_range = range_item[""]
         hyperslab_range = split(hyperslab_range, ' ')
         hyperslab_range = parse.(UInt, hyperslab_range)

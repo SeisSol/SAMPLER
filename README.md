@@ -11,7 +11,7 @@ Then, in the command line, type:
 
     julia
     ]
-    add NetCDF Interpolations FFTW ArgParse XMLDict
+    add NetCDF Interpolations FFTW ArgParse XMLDict HDF5 Infiltrator
     ←
     exit()
 

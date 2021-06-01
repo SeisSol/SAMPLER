@@ -17,16 +17,19 @@ module Args
     VarMapping      = Dict{String, String}
     SamplingTuple   = NTuple{3, Float64}
 
-    struct Timespan
-        t_start :: Float64
-        t_end   :: Float64
+    struct Timespan{T <: Number}
+        t_start :: T
+        t_end   :: T
     end
 
-    function ArgParse.parse_item(::Type{Timespan}, x::AbstractString)
+    function ArgParse.parse_item(::Type{Timespan{T}}, x::AbstractString) where T <: Number
         x = strip(x)
 
+        t_start :: T = zero(T)
+        t_end   :: T = typemax(T)
+
         if x == "all"
-            return Timespan(0., Inf64)
+            return Timespan{T}(t_start, t_end)
         end
 
         if occursin(',', x)
@@ -36,14 +39,10 @@ module Args
                 throw(ArgumentError(""""$x" does not match the format "start,end"!"""))
             end
 
-            # If empty, assume t_start to be 0 and t_end to be infinity
-            t_start :: Float64 = 0
-            t_end   :: Float64 = Inf64
-
             try
                 timestamps[1] = strip(timestamps[1])
                 if length(timestamps[1]) != 0
-                    t_start = parse(Float64, strip(timestamps[1]))
+                    t_start = parse(T, strip(timestamps[1]))
                 end
             catch
                 throw(ArgumentError(""""$(timestamps[1])" is not a floating point value!"""))
@@ -52,30 +51,30 @@ module Args
             try
                 timestamps[2] = strip(timestamps[2])
                 if length(timestamps[2]) != 0
-                    t_end = parse(Float64, timestamps[2])
+                    t_end = parse(T, timestamps[2])
                 end
             catch
                 throw(ArgumentError(""""$(timestamps[2])" is not a floating point value!"""))
             end
 
-            if (t_start < 0)
-                    throw(ArgumentError("Timestamps have to be non-negative!"))
+            if (t_start < zero(T))
+                throw(ArgumentError("Timestamps have to be non-negative!"))
             end
 
             if t_start > t_end
                 throw(ArgumentError("The start timestamp must be less than the end timestamp!"))
             end
 
-            return Timespan(t_start, t_end)
+            return Timespan{T}(t_start, t_end)
         else
             try
-                t = parse(Float64, x)
+                t = parse(T, x)
 
-                if t < 0
+                if t < zero(T)
                     throw(ArgumentError(""""$t" must be non-negative!"""))
                 end
 
-                return Timespan(t, t)
+                return Timespan{T}(t, t)
             catch
                 throw(ArgumentError(""""$t" is not a floating point value!"""))
             end
@@ -87,8 +86,9 @@ module Args
         non_mapping_entries = filter(entry -> !occursin("=>", entry), entries)
         mapping_entries = setdiff(entries, non_mapping_entries)
         mapping_entries = map(str -> split(str, "=>"), collect(mapping_entries))
-        entries = merge(Dict(map(str_list -> String(str_list[1]) => String(str_list[2]), mapping_entries)),
-                        Dict(map(entry -> String(entry)=>String(entry), collect(non_mapping_entries))))
+
+        entries = merge(Dict(map(str_list   -> String(str_list[1])  => String(str_list[2]), mapping_entries)),
+                        Dict(map(entry      -> String(entry)        => String(entry),       collect(non_mapping_entries))))
         return entries
     end
 
@@ -118,11 +118,20 @@ module Args
                 default = ""
             "--output-time", "-t"
                 help = """The time range of the output. Format: "[start,]end" or "all".\n
-                                \t start and end both have to follow the "[[hh:]mm:]ss" format.
-                                The end timestamp is bounded by the last input timestamp.\n
+                                \t start and end are interpreted as timeSTAMPs, not timeSTEP indices!
+                                   The end timestep is bounded by the last input timestep.\n
+                                \t If only end is given, only that timestep will be rasterized.\n
+                                \t If start or end is an empty string, it will be assumed to be 0 or infinity respectively.\n
                                 \t By default, every timestep will be output."""
-                arg_type = Timespan
-                default = Timespan(-Inf64, Inf64)
+                arg_type = Timespan{Float64}
+            "--output-steps", "-s"
+                help = """The time range of the output. Format: "[start,]end" or "all".\n
+                                \t start and end are interpreted as timeSTEP indices, not timeSTAMPs!
+                                   The end timestep is bounded by the last input timestep.\n
+                                \t If only end is given, only that timestep will be rasterized.\n
+                                \t If start or end is an empty string, it will be assumed to be 0 or infinity respectively.\n
+                                \t By default, every timestep will be output."""
+                arg_type = Timespan{UInt64}
             "--sampling-rate", "-r"
                 help = """The size in meters of one cell edge in the resampled output.\n
                                 \t Format: dx[,dy,dz]. If only dx is given, dy and dz will be set equal to dx.\n
@@ -152,7 +161,7 @@ module Args
                                 \t Format: [M1[,M2[,...]] where Mi is either a variable name or a mapping like "W=>d".\n
                                 \t Examples: U,V,W; U,V,W=>eta; U=>X,V=>Y"""
                 arg_type = VarMapping
-                default=Dict("W"=>"d")
+                default=Dict("W"=>"d", "b"=>"b")
             "--surface-vars"
                 help = """The names of all variables that should be extracted from the 2D grid at the sea surface, separated by commas.\n
                                 \t The same formatting rules apply as for --seafloor-vars."""
@@ -160,7 +169,7 @@ module Args
                 default=Dict("W"=>"eta")
             "--volumetric-vars"
                 help = """The names of all variables that should be extracted from the 3D grid, separated by commas.\n
-                \t The same formatting rules apply as for --seafloor-vars."""
+                                \t The same formatting rules apply as for --seafloor-vars."""
                 arg_type = VarMapping
                 default=Dict("u"=>"u", "v"=>"v")
             "--seafloor-only"
@@ -175,7 +184,7 @@ module Args
                 default="naive"
             "--lb-autotune"
                 help = """[DO NOT USE] Perform a test run with the naive load balancer and collect data to autotune the workload-LB. 
-                    The found parameters will be saved automatically and the workload-LB can then be used."""
+                                The found parameters will be saved automatically and the workload-LB can then be used."""
                 action = :store_true
             "input-file-2d"
                 help = "The SeisSol 2D output in XDMF format. Use the output file with the _surface suffix."
@@ -193,6 +202,10 @@ module Args
 
     function validate_args!(args::Dict)
         args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
+
+        if !isnothing(args["output-time"]) && !isnothing(args["output-steps"])
+           throw(ArgumentError("Setting both '--output-time' and '--output-steps' simultaneously is not allowed!"))
+        end
 
         if !(args["load-balancer"] in ["naive", "count", "workload"])
             throw(ArgumentError("Load Balancer '$(args["load-balancer"])' does not exist!"))

@@ -25,80 +25,88 @@ const ARGS = Args.read_args()
 
 function main()
 
-    sampling_rate = ARGS["sampling-rate"]
-    has_3d = !isempty(ARGS["input-file-3d"])
-    has_tanioka = ARGS["tanioka"]
-    seafloor_only = ARGS["seafloor-only"]
+    #============================================#
+    # Read and preprocess args
+    #============================================#
 
-    seafloor_vars = ARGS["seafloor-vars"]
-    surface_vars = ARGS["surface-vars"]
+    mem_limit       = ARGS["memory-limit"]
+    sampling_rate   = ARGS["sampling-rate"]
+
+    has_3d          = !isempty(ARGS["input-file-3d"])
+    seafloor_only   = ARGS["seafloor-only"]
+    
+    seafloor_vars   = ARGS["seafloor-vars"]
+    surface_vars    = ARGS["surface-vars"]
     volumetric_vars = ARGS["volumetric-vars"]
+    
+    water_height    = ARGS["water-height"]
+    has_tanioka     = ARGS["tanioka"]
+
+    out_filename    = ARGS["output-file"]
+    endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
+
+    surface_output  = !seafloor_only
+    volume_output   = !seafloor_only && has_3d
 
     #============================================#
     # Compare timesteps of 2D and 3D files.
     # They must be equal.
     #============================================#
 
-    times    = XDMF.timesteps_of(ARGS["input-file-2d"])
-    t_start  = ARGS["output-time"].t_start
-    t_end    = ARGS["output-time"].t_end
+    xdmf2d = XDMF.XDMFFile(ARGS["input-file-2d"])
+    times  = XDMF.timesteps_of(xdmf2d)
 
     if has_3d
-        times_3d = XDMF.timesteps_of(ARGS["input-file-3d"])
+        xdmf3d = XDMF.XDMFFile(ARGS["input-file-3d"])
+        times_3d = XDMF.timesteps_of(xdmf3d)
 
         if (times_3d != times)
             throw(ArgumentError("Timesteps of 2D and 3D input files do not match!"))
         end
 
+        xdmf3d = nothing
         times_3d = nothing
     end
 
-    timestep_begin = 1
-    while timestep_begin != length(times) && times[timestep_begin + 1] ≤ t_start
-        timestep_begin += 1
+    #============================================#
+    # Compute timesteps to be processed from args
+    #============================================#
+
+    t_start = 1
+    t_end   = length(times)
+
+    if !isnothing(ARGS["output-time"])
+        out_time = ARGS["output-time"]
+        while t_start < length(times) && times[t_start + 1] ≤ out_time.t_start
+            t_start += 1
+        end
+
+        while t_end > t_start && times[t_end - 1] ≥ out_time.t_end
+            t_end -= 1
+        end
+    elseif !isnothing(ARGS["output-steps"])
+        out_steps = ARGS["output-steps"]
+        t_start   = min(1 + out_steps.t_start, length(times))
+        t_end     = min(1 + out_steps.t_end, length(times))
     end
-
-    timestep_end = length(times)
-    while timestep_end != 1 && times[timestep_end - 1] ≥ t_end
-        timestep_end -= 1
-    end
-
-    water_height = ARGS["water-height"]
-
-    # Delete output file if it already exists
-    out_filename = ARGS["output-file"]
-    endswith(out_filename, ".nc") || (out_filename = out_filename * ".nc")
-
-    surface_output = !seafloor_only
-    volume_output = !seafloor_only && has_3d
 
     #============================================#
     # Process 2D seafloor
     #============================================#
 
-    triangles,  points_2d = XDMF.grid_of(ARGS["input-file-2d"])
-
-    # If tanioka, add horizontal seafloor displacements to seafloor_vars if not already in there
-    if has_tanioka
-        for var ∈ ["U", "V"]; if !haskey(seafloor_vars, var); seafloor_vars[var] = var; end; end
+    empty_mapping    = Args.VarMapping()
+    stat_var_mapping = Args.VarMapping()
+    # "b" is the only static variable. If it is found in the mapping, it is separated into the stat_var_mapping.
+    if haskey(seafloor_vars, "b"); 
+        stat_var_mapping["b"] = seafloor_vars["b"]
+        delete!(seafloor_vars, "b")
     end
 
-    # Ensure bathymetry output
-    #if !haskey(seafloor_vars, "b"); seafloor_vars["b"] = "b"; end
-
-    all_out_names = [collect(values(seafloor_vars));
-                     surface_output ? collect(values(surface_vars)) : [];
-                     volume_output ? collect(values(volumetric_vars)) : []]
-
-    # b is the only static variable, this list only covers dynamic ones
-    #all_out_names = filter(name -> name != seafloor_vars["b"], all_out_names)
-
-    in_names = collect(keys(seafloor_vars))
-    Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, seafloor_vars,
-                            times, sampling_rate, out_filename, ARGS["memory-limit"],
-                            z_range=Rasterization.z_floor, create_file_vars=all_out_names,
-                            t_begin=timestep_begin, t_end=timestep_end,
-                            water_height=water_height, tanioka=has_tanioka)
+    Rasterization.rasterize(xdmf2d, seafloor_vars, stat_var_mapping, times, sampling_rate, out_filename, mem_limit;
+                            create_nc_dyn_vars=[seafloor_vars, surface_vars, volumetric_vars],
+                            create_nc_stat_vars=[stat_var_mapping],
+                            z_range=Rasterization.z_floor, t_begin=t_start, t_end=t_end, water_height=water_height, 
+                            tanioka=has_tanioka)
 
     GC.gc(true)
 
@@ -107,16 +115,12 @@ function main()
     #============================================#
 
     if surface_output
-        in_names = collect(keys(surface_vars))
-        Rasterization.rasterize(triangles, points_2d, XDMF.data_of(ARGS["input-file-2d"], in_names...), in_names, surface_vars,
-                                times, sampling_rate, out_filename, ARGS["memory-limit"],
-                                z_range=Rasterization.z_surface,
-                                t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
+        Rasterization.rasterize(xdmf2d, surface_vars, empty_mapping, times, sampling_rate, out_filename, mem_limit; 
+                                z_range=Rasterization.z_surface, t_begin=t_start, t_end=t_end, water_height=water_height)
     end
 
 
-    triangles = nothing
-    points_2d = nothing
+    xdmf2d = nothing
     GC.gc(true)
 
     #============================================#
@@ -124,12 +128,10 @@ function main()
     #============================================#
 
     if volume_output
-        tetrahedra, points_3d = XDMF.grid_of(ARGS["input-file-3d"])
+        xdmf3d = XDMF.XDMFFile(ARGS["input-file-3d"])
 
-        in_names = collect(keys(volumetric_vars))
-        Rasterization.rasterize(tetrahedra, points_3d, XDMF.data_of(ARGS["input-file-3d"], in_names...), in_names, volumetric_vars,
-                                times, sampling_rate, out_filename, ARGS["memory-limit"],
-                                t_begin=timestep_begin, t_end=timestep_end, water_height=water_height)
+        Rasterization.rasterize(xdmf3d, volumetric_vars, empty_mapping, times, sampling_rate, out_filename, mem_limit; 
+                                z_range=Rasterization.z_all, t_begin=t_start, t_end=t_end, water_height=water_height)
     end
 end
 
@@ -138,6 +140,7 @@ println("Using $(nthreads()) threads.")
 Pkg.precompile()
 println("Done.")
 
+# Closest thing we have to __name__ == "__main__" in Julia :/
 if !isinteractive()
     main()
 end
