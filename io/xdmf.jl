@@ -115,7 +115,7 @@ module XDMF
             hdf_dataset = hdf_file[hdf_dataset_path]
             if !ismmappable(hdf_dataset)
                 close(hdf_file)
-                error("Handling compressed/chunked HDF5 files is not yet implemented!")
+                error("Compressed/chunked HDF5 files are not supported. Use 'scripts/hdf5_preprocess.sh' to convert the inputs into a usable format.")
             end
             
             hdf_mmap = readmmap(hdf_dataset)
@@ -154,7 +154,7 @@ module XDMF
             hdf_dataset = hdf_file[hdf_dataset_path]
             if !ismmappable(hdf_dataset)
                 close(hdf_file)
-                error("Handling compressed/chunked HDF5 files is not yet implemented!")
+                error("Compressed/chunked HDF5 files are not supported. Use 'scripts/hdf5_preprocess.sh' to convert the inputs into a usable format.")
             end
 
             

@@ -117,7 +117,7 @@ Output `W` with the same name, remap mesh geometry height to `bathy`.
 
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
-* Currently, chunking in HDF5 inputs is not supported due to library constraints. If you get an error when using such inputs, use the 
+* Currently, chunking in HDF5 inputs is not supported due to library constraints. If you get an error when using such inputs, use `scripts/hdf5_preprocess.sh` on them first.
 
 
 [1]: http://www.seissol.org/
