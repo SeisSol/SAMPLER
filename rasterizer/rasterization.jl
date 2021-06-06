@@ -37,6 +37,9 @@ module Rasterization
         d   :: Float64
     end
 
+    """
+    Contains all static information necessary for rasterization, as well as some computed values for convenience.
+    """
     struct RasterizationContext
         xdmf                        :: XDMF.XDMFFile
         simplices                   :: AbstractArray{Integer, 2}
@@ -75,6 +78,9 @@ module Rasterization
         out_filename                :: AbstractString
     end
 
+    """
+    Contains buffers that are rewritten during rasterization, as well as binning info.
+    """
     struct IterationBuffers
         bin_ids
         bin_counts
@@ -84,6 +90,9 @@ module Rasterization
         prefetched_vars             :: Dict{String, Array{Float64, 2}}
     end
 
+    """
+    Returns the name of the simplex type currently being rasterized (triangle or tetrahedron), either in plural (default) or singular form.
+    """
     @inline function simplex_name(ctx, plural=true)
         return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
     end
@@ -113,9 +122,17 @@ module Rasterization
         b_mem_per_out_var_and_timestep  = sizeof(Float64) * samples[X] * samples[Y]
         b_mem_per_in_var_and_timestep   = sizeof(Float64) * n_simplices
 
-        n_in_vars                       = length(dyn_var_mapping)
         # static vars are currently only bathymetry and thus extracted from grid geometry. Thus, no in_vars_stat.
         in_vars_dyn                     = collect(keys(dyn_var_mapping))
+
+        # Tanioka's method also needs horizontal displacements, add them if not present yet. 
+        if tanioka
+            for var_name ∈ ("U", "V")
+                var_name ∈ in_vars_dyn || push!(in_vars_dyn, var_name)
+            end
+        end
+
+        n_in_vars                       = length(in_vars_dyn)
 
         out_vars_stat                   = z_range != z_all ? collect(values(stat_var_mapping)) : []
         out_vars_dyn                    = collect(values(dyn_var_mapping))
@@ -174,21 +191,22 @@ module Rasterization
         Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
 
     # Arguments
-    - `xdmf`:             The XDMF file handle of the file to be rasterized
-    - `in_var_names`:     The names, of the variables in `in_vars` in the same order as those vars
-    - `in_out_mapping`:   A dictionary providing the output variable name for each input variable name
-    - `times`:            An array of timestamps associated to the timesteps
-    - `sampling_rate`:    A tuple (Δx, Δy, Δz) defining the regular grid cell size.
-    - `out_filename`:     The path/name of the output NetCDF file
-    - `mem_limit`:        The soft memory (in bytes) the software is allowed to utilize (soft limit!)
-    - `z_range`:          A filter for discarding simplices above/below a threshold. `z_floor` discards everything above `0-Z_RANGE_TOL`,
-                          `z_surface` discards everything below. `z_all` keeps all simplices.
-    - `t_begin`:          The first timestep to be rasterized
-    - `t_end`:            The last timestep to be rasterized
-    - `create_file_vars`: If not empty: create output file containing the var names in the list (already existing file will be overwritten).
-                          Else: use existing output file.
-    - `water_height`:     The offset to translate the water level to be at `z=0`.
-    - `tanioka`:          Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements as input.
+    - `xdmf`:                   The XDMF file handle of the file to be rasterized
+    - `dyn_var_mapping`:        Mapping of input to output names for dynamic variables in the current rasterization step.
+    - `stat_var_mapping`:       Analogous, but for static variables.
+    - `times`:                  An array of timestamps corresponding to the timesteps
+    - `sampling_rate`:          A tuple (Δx, Δy, Δz) defining the regular grid cell size.
+    - `out_filename`:           The path/name of the output NetCDF file
+    - `mem_limit`:              The soft memory (in bytes) the software is allowed to utilize (soft limit!)
+    - `z_range`:                A filter for discarding simplices in a certain mesh region. `z_floor` only keeps bathymetry, `z_surface` only keeps the sea surface, 
+                                `z_all` keeps all simplices.
+    - `t_begin`:                The first timestep to be rasterized
+    - `t_end`:                  The last timestep to be rasterized
+    - `create_nc_dyn_vars`:     If not empty: create output file containing all value sides of the var mapping as variables. Existing file is overwritten.
+                                Else: use existing file. If given, should contain all variable mappings of all rasterization passes.
+    - `create_nc_stat_vars`:    Analogous to above.
+    - `water_height`:           The offset to translate the water level to be at `z=0`.
+    - `tanioka`:                Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements to be present in the input XDMF file.
     """
     function rasterize(
         xdmf                :: XDMFFile,
@@ -206,7 +224,8 @@ module Rasterization
         water_height        :: Float64 = 0.,
         tanioka             :: Bool    = false)
 
-        ctx = RasterizationContext(xdmf, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, water_height, t_begin, t_end, times, out_filename)
+        ctx = RasterizationContext(xdmf, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
+                                   water_height, t_begin, t_end, times, out_filename)
 
         #============================================#
         # Print rasterization settings
@@ -271,99 +290,6 @@ module Rasterization
         iterate(ctx, itbuf)
 
     end # function rasterize
-
-    function iterate(ctx, itbuf)
-        # In each iteration, process ALL simplices for ALL variables for as many timesteps as possible*
-        # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
-        # timesteps that can be stored in l_iter_output_grids.
-        for iteration ∈ 1:ctx.n_iterations
-            t_start = ctx.t_begin + (iteration - 1) * ctx.n_timesteps_per_iteration
-            n_times = min(ctx.n_timesteps - (iteration - 1) * ctx.n_timesteps_per_iteration, ctx.n_timesteps_per_iteration)
-            t_stop = t_start + n_times - 1
-
-            #============================================#
-            # Prefetch the values of all vars in all
-            # timesteps for the current iteration.
-            # This eliminates random accesses later on
-            # and D R A S T I C A L L Y improves runtime.
-            #============================================#
-
-            var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(ctx.xdmf, t_start, t_stop, ctx.in_vars_dyn)
-
-            for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
-                copyto!(itbuf.prefetched_vars[var_name][1:ctx.n_simplices, t], var_bufs[var_name][t][1:ctx.n_simplices])
-            end
-
-            # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
-            for grid ∈ values(itbuf.out_grids_dyn)
-                grid[:,:, 1:n_times] .= 0
-            end
-
-            # Static vars only need to be read once. Do that in the first iteration.
-            if iteration == 1
-                for grid ∈ values(itbuf.out_grids_stat)
-                    grid .= 0
-                end
-            end
-
-            itbuf.out_sample_counts .= 0
-
-            #============================================#
-            # Binning
-            #============================================#
-            # First, process each of the n_threads normal
-            # bins. (P-partitioning)
-            #
-            # Then, process the n_threads-1 bins on the
-            # borders between normal bins. (B-partitioning)
-            #
-            # Lastly, process the 1 bin of tetrahedra
-            # that overlapped more than 2 adjacent bins.
-            # (R-partitioning)
-            #============================================#
-
-            # P-partitioning
-            Threads.@threads for thread_id ∈ 1:ctx.n_threads
-                iterate_simps!(thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
-            end # for thread_id
-
-            println("Processing $(simplex_name(ctx)) on bucket borders...")
-
-            # B-partitioning
-            Threads.@threads for thread_id ∈ 1:ctx.n_threads-1
-                iterate_simps!(ctx.n_threads + thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
-            end # for thread_id
-
-            # R-partitioning
-            iterate_simps!(2 * ctx.n_threads, ctx, itbuf, t_start, t_stop, print_progress = true)
-
-            println("Done.")
-
-            #============================================#
-            # Write NetCDF outputs for this iteration
-            #============================================#
-
-            println("Writing outputs for timesteps $(t_start-1)-$(t_stop-1)...")
-
-            start = [1, 1, (t_start-ctx.t_begin)+1]
-            cnt = [-1, -1, n_times]
-
-            for name ∈ ctx.out_vars_dyn
-                ncwrite(itbuf.out_grids_dyn[name], ctx.out_filename, name, start=start, count=cnt)
-            end
-
-            if iteration == 1 # Only write static outputs once
-                for name ∈ ctx.out_vars_stat
-                    if name == ctx.stat_var_mapping["b"] # Water height correction
-                        itbuf.out_grids_stat[name] .-= ctx.water_height
-                    end
-                    ncwrite(itbuf.out_grids_stat[name], ctx.out_filename, name, start=[1, 1], count=[-1, -1])
-                end
-            end
-
-            println("Done.")
-        end # for iteration
-    end
 
     function _bins_equal_load(ctx)
         # Constant load factor per column
@@ -480,6 +406,99 @@ module Rasterization
 
         println("Done.")
         return (l_bin_ids, l_bin_counts)
+    end
+
+    function iterate(ctx, itbuf)
+        # In each iteration, process ALL simplices for ALL variables for as many timesteps as possible*
+        # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
+        # timesteps that can be stored in l_iter_output_grids.
+        for iteration ∈ 1:ctx.n_iterations
+            t_start = ctx.t_begin + (iteration - 1) * ctx.n_timesteps_per_iteration
+            n_times = min(ctx.n_timesteps - (iteration - 1) * ctx.n_timesteps_per_iteration, ctx.n_timesteps_per_iteration)
+            t_stop = t_start + n_times - 1
+
+            #============================================#
+            # Prefetch the values of all vars in all
+            # timesteps for the current iteration.
+            # This eliminates random accesses later on
+            # and D R A S T I C A L L Y improves runtime.
+            #============================================#
+
+            var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(ctx.xdmf, t_start, t_stop, ctx.in_vars_dyn)
+
+            for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
+                copyto!(itbuf.prefetched_vars[var_name][1:ctx.n_simplices, t], var_bufs[var_name][t][1:ctx.n_simplices])
+            end
+
+            # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
+            for grid ∈ values(itbuf.out_grids_dyn)
+                grid[:,:, 1:n_times] .= 0
+            end
+
+            # Static vars only need to be read once. Do that in the first iteration.
+            if iteration == 1
+                for grid ∈ values(itbuf.out_grids_stat)
+                    grid .= 0
+                end
+            end
+
+            itbuf.out_sample_counts .= 0
+
+            #============================================#
+            # Binning
+            #============================================#
+            # First, process each of the n_threads normal
+            # bins. (P-partitioning)
+            #
+            # Then, process the n_threads-1 bins on the
+            # borders between normal bins. (B-partitioning)
+            #
+            # Lastly, process the 1 bin of tetrahedra
+            # that overlapped more than 2 adjacent bins.
+            # (R-partitioning)
+            #============================================#
+
+            # P-partitioning
+            Threads.@threads for thread_id ∈ 1:ctx.n_threads
+                iterate_simps!(thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
+            end # for thread_id
+
+            println("Processing $(simplex_name(ctx)) on bucket borders...")
+
+            # B-partitioning
+            Threads.@threads for thread_id ∈ 1:ctx.n_threads-1
+                iterate_simps!(ctx.n_threads + thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
+            end # for thread_id
+
+            # R-partitioning
+            iterate_simps!(2 * ctx.n_threads, ctx, itbuf, t_start, t_stop, print_progress = true)
+
+            println("Done.")
+
+            #============================================#
+            # Write NetCDF outputs for this iteration
+            #============================================#
+
+            println("Writing outputs for timesteps $(t_start-1)-$(t_stop-1)...")
+
+            start = [1, 1, (t_start-ctx.t_begin)+1]
+            cnt = [-1, -1, n_times]
+
+            for name ∈ ctx.out_vars_dyn
+                ncwrite(itbuf.out_grids_dyn[name], ctx.out_filename, name, start=start, count=cnt)
+            end
+
+            if iteration == 1 # Only write static outputs once
+                for name ∈ ctx.out_vars_stat
+                    if name == ctx.stat_var_mapping["b"] # Water height correction
+                        itbuf.out_grids_stat[name] .-= ctx.water_height
+                    end
+                    ncwrite(itbuf.out_grids_stat[name], ctx.out_filename, name, start=[1, 1], count=[-1, -1])
+                end
+            end
+
+            println("Done.")
+        end # for iteration
     end
 
     function iterate_simps!(bin_id, ctx:: RasterizationContext, itbuf:: IterationBuffers, t_start, t_stop; print_progress=false)

@@ -15,6 +15,9 @@ module NC
     dist_atts   = Dict("units" => "m")
     no_atts     = Dict()
 
+    """
+    Opens the specified NetCDF file in write mode and returns its handle.
+    """
     function get_netcdf(filename :: AbstractString) :: NcFile
         nc :: NcFile = NetCDF.open(filename, mode=NC_WRITE)
         NetCDF.nc_set_fill(nc.ncid, NetCDF.NC_NOFILL, Ptr{Int32}(0))
@@ -22,9 +25,10 @@ module NC
     end
 
     """
-    Create the NetCDF file `filename` with coordinate values `x_vals`, `y_vals` and `t_vals` or open an existing one.
-
-    The format of the NetCDF file is chosen to exactly match the requirements of this program.
+    Create the NetCDF file `filename` with dimension values `x_vals`, `y_vals` and `t_vals`.
+    Also create empty output variables according to `static_var_mappings` and `dynamic_var_mappings`.
+    For each key in those var mappings, a variable corresponding to the mapped output name of that key is created, 
+    and assigned the attributes (e.g. units) of the input variable.
     """
     function create_netcdf(filename :: AbstractString, x_vals, y_vals, t_vals,
                            static_var_mappings  :: Array{Args.VarMapping, 1}, 
@@ -36,6 +40,7 @@ module NC
             throw(ArgumentError("Dimension values have to be passed when creating a NetCDF file!"))
         end
 
+        # `var_name` is a name of an INPUT variable. Thus, we can know which units should be assigned.
         function get_units(var_name:: String)
             if match(r"[uvw]", var_name) !== nothing
                 return vel_atts
