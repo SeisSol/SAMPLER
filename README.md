@@ -1,12 +1,12 @@
 # SAMPLER
 **S**eismic **A**ctivity **M**apping & **P**rojection for **L**ethal maritime **E**vent **R**econstruction (working title)
 
-SAMPLER is a collection of scripts for rasterizing unstructured meshes from [SeisSol][1] into a format compatible with [sam(oa)²][2].
+SAMPLER is a program for rasterizing unstructured meshes output by [SeisSol][1] into a format compatible with [sam(oa)²][2].
 
-Additionally, it offers postprocessing options, namely depth filtering via [Kajiura's filter][3].
+Additionally, it offers postprocessing options, namely depth filtering via [Kajiura's filter][3] and converting horizontal displacements to vertical ones using [Tanioka's method][7].
 
 ## Installation
-First, set up [Julia][4] on your machine.
+First, set up [Julia][4] on your machine. Please stick to version **1.4.x** for now as some libraries have changed behavior in newer versions.
 Then, in the command line, type:
 
     julia
@@ -15,36 +15,43 @@ Then, in the command line, type:
     ←
     exit()
 
-Note: "←" is the backspace key.
-Note: The `julia` command might not be available right after installation and you may need to manually make it available (you could add this line to your `~/.bashrc` file):
+_Note: `←` is the backspace key._
+
+_Note: The `julia` command might not be available right after installation and you may need to manually make it available (you could add this line to your `~/.bashrc` file):_
 
     export PATH=$PATH:$HOME/julia-1.4.1/bin
 
+_Note: In Windows, your path should already be set correctly after the installation of Julia._
+
 Afterwards, clone the SAMPLER repository to your machine (if you read this on the machine, you have already completed this step!):
 
-    git clone https://gitlab.lrz.de/ge73tes/sampler
+    git clone https://github.com/SeisSol/SAMPLER
 
-Note: In the following it is assumed that `path/to/sampler` is the installation path (the sampler folder contains this README.md file). 
+_Note: In the following it is assumed that `path/to/sampler` is the installation path (the sampler folder contains this README.md file)._
 
 ## Usage
 Once you have installed SAMPLER and you have the SeisSol outputs in XDMF format you can run the script:
 
     cd path/to/sampler/src
-    export JULIA_NUM_THREADS = <number_of_hardware_threads_available>
+    export JULIA_NUM_THREADS=<num_threads>
     julia sampler.jl <options>
 
-Note: For an explanation of the available command line options, type:
+_Note: In Windows (PowerShell), replace `export ...` with:_
+
+    $env:JULIA_NUM_THREADS = <num_threads>
+
+_Note: For an explanation of the available command line options, type:_
 
     julia sampler.jl --help
 
 You can also have a look at the `run_sampler.sh` and `run_kajiura.sh` scripts to see how SAMPLER can be executed on the LRZ compute clusters.
 More help for running on the cluster can be found [here][5].
 
-Once you have rasterized the SeisSol output files, you can _optionally_ use Kajiura's filter on the outputs:
+Once you have rasterized the SeisSol output files, you can optionally use Kajiura's filter on the outputs:
 
     julia kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
 
-Note: Kajiura's Filter needs to process all timesteps prior to "timestep_end".
+_Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
 
 ## Examples
 ### Basic example: Rasterize 2D grids (seafloor and sea surface data is available)
@@ -62,19 +69,20 @@ Only rasterizes the 2D _seafloor_ elevation over time. Optionally thereafter:
     julia kajiura.jl ~/sampler-output.nc ~/kajiura-output.nc 300
 
 Applies Kajiura's Filter for 300 timesteps.
-Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-only`) and then apply Kajiura's Filter to them. But that usually does not make much sense.
+
+_Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-only`) and then apply Kajiura's Filter to them. But that usually does not make much sense._
 
 ### Rasterize seafloor using Tanioka's method
 
     julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
 
 Applies Tanioka's method while rasterizing the seafloor. Needed if bathymetry is not flat.
-Note: You can also use Tanioka's method when rasterizing more than just the seafloor outputs. 
-It will only affect the seafloor uplift, though.
+
+_Note: You can also use Tanioka's method when rasterizing more than just the seafloor outputs. It will only affect the seafloor uplift._
 
 ### Rasterize fully (with 3D velocity grid)
 
-    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -t 300 ~/seissol-outputs/out-surface.xdmf
+    julia sampler.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -s 300 ~/seissol-outputs/out-surface.xdmf
 
 Rasterizes all grids and variables needed for tsunami simulation, including the 3D velocity grid.
 Only rasterizes timestep 300 (for example).
@@ -86,14 +94,26 @@ Refer to its README.md for mor information.
 
 ## Output format
 SAMPLER will always produce a regular grid in NetCDF format, with point data according to the command line parameters given.
-The NetCDF file will always contain these variables (but not all of them are necessarily filled with data):
-* x - x-coordinates, always written
-* y - y-coordinates, always written
-* b - bathymetry height, always written
-* d - seafloor displacements, always written
-* eta - seasurface displacement, only written if there are triangles in the 2D input at sealevel
-* u - water velocity in x-direction, only written when rasterizing fully (with 3D)
-* v - water velocity in y-direction, only written when rasterizing fully (with 3D)
+You can control which input variables get mapped to which outputs via the `--seafloor-vars`, `--surface-vars`, and `--volumetric-vars` arguments.
+The standard mapping is:
+
+| Mesh region | Mappings    |
+|-------------|-------------|
+| Seafloor    | `W => d`    |
+|             | `b => b`*   |
+| Surface     | `W => eta`  |
+| Volumetric  | `u => u`    |
+|             | `v => v`    |
+
+\* `b` is not a variable in SeisSol outputs but is understood by SAMPLER as being the geometry of the 2D mesh. Thus, you can use the `b => ...` mapping to output mesh geometry.
+
+Additionally, `x`, `y` and `time` will always be output as dimensions and variables and cannot be renamed.
+
+Example mapping:
+
+    --seafloor-vars "W,b=>bathy"
+
+Output `W` with the same name, remap mesh geometry height to `bathy`.
 
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
@@ -106,3 +126,4 @@ The NetCDF file will always contain these variables (but not all of them are nec
 [4]: https://julialang.org/downloads/
 [5]: https://doku.lrz.de/display/PUBLIC/Running+serial+jobs+on+the+Linux-Cluster#RunningserialjobsontheLinuxCluster-Script-drivenSLURMjobs
 [6]: https://gitlab.lrz.de/samoa/samoa/-/tree/max-bachelor
+[7]: https://dx.doi.org/10.1029/96GL00736
