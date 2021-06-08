@@ -32,7 +32,7 @@ _Note: In the following it is assumed that `path/to/sampler` is the installation
 ## Usage
 Once you have installed SAMPLER and you have the SeisSol outputs in XDMF format you can run the script:
 
-    cd path/to/sampler/src
+    cd path/to/sampler/
     export JULIA_NUM_THREADS=<num_threads>
     julia sampler.jl <options>
 
