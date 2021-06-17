@@ -41,7 +41,6 @@ module Rasterization
     Contains all static information necessary for rasterization, as well as some computed values for convenience.
     """
     struct RasterizationContext
-        xdmf                        :: XDMF.XDMFFile
         simplices                   :: AbstractArray{Integer, 2}
         points                      :: AbstractArray{AbstractFloat, 2}
 
@@ -97,8 +96,7 @@ module Rasterization
         return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
     end
 
-    function RasterizationContext(xdmf, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, water_height, t_begin, t_end, times, out_filename)
-        simplices, points               = grid_of(xdmf)
+    function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, water_height, t_begin, t_end, times, out_filename)
         domain                          = Tuple( (minimum(points[i, :]), maximum(points[i, :]))                     for i in X:Z)
         samples                         = Tuple( ceil(UInt, (domain[i][MAX] - domain[i][MIN]) / sampling_rate[i])   for i in X:Z)
 
@@ -147,7 +145,7 @@ module Rasterization
 
         n_iterations                    = ceil(Int, n_timesteps / n_timesteps_per_iteration)
 
-        return RasterizationContext(xdmf, simplices, points, 
+        return RasterizationContext(simplices, points, 
                                     z_range, domain, samples, sampling_rate,
                                     dyn_var_mapping, stat_var_mapping, 
                                     in_vars_dyn, out_vars_stat, out_vars_dyn,
@@ -224,7 +222,9 @@ module Rasterization
         water_height        :: Float64 = 0.,
         tanioka             :: Bool    = false)
 
-        ctx = RasterizationContext(xdmf, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
+        simplices, points = grid_of(xdmf)
+
+        ctx = RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
                                    water_height, t_begin, t_end, times, out_filename)
 
         #============================================#
@@ -287,7 +287,7 @@ module Rasterization
         # Iterate over and rasterize timesteps
         #============================================#
 
-        iterate(ctx, itbuf)
+        iterate(ctx, itbuf, xdmf)
 
     end # function rasterize
 
@@ -408,7 +408,7 @@ module Rasterization
         return (l_bin_ids, l_bin_counts)
     end
 
-    function iterate(ctx, itbuf)
+    function iterate(ctx, itbuf, xdmf)
         # In each iteration, process ALL simplices for ALL variables for as many timesteps as possible*
         # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
         # timesteps that can be stored in l_iter_output_grids.
@@ -424,7 +424,7 @@ module Rasterization
             # and D R A S T I C A L L Y improves runtime.
             #============================================#
 
-            var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(ctx.xdmf, t_start, t_stop, ctx.in_vars_dyn)
+            var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(xdmf, t_start, t_stop, ctx.in_vars_dyn)
 
             for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
                 copyto!(itbuf.prefetched_vars[var_name][1:ctx.n_simplices, t], var_bufs[var_name][t][1:ctx.n_simplices])
@@ -511,11 +511,10 @@ module Rasterization
 
         m43_simp_points     = Array{Float64, 2}(undef, (ctx.n_simplex_points, 3))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
-        l_face_points       = Array{SubArray, 1}(undef, ctx.n_simplex_points)
-        l_tet_faces         = Array{HesseNormalForm, 1}(undef, ctx.n_simplex_points)
+        l_simp_points       = Array{SubArray, 1}(undef, ctx.n_simplex_points)
+        l_simp_hnfs         = Array{HesseNormalForm, 1}(undef, ctx.n_simplex_points)
 
         v_p                 = Array{Float64, 1}(undef, 3)
-        v_n                 = Array{Float64, 1}(undef, 3)
         simp_sample_counts  = Array{UInt16, 2}(undef, (64, 64))
 
         d_start             = now()
@@ -592,81 +591,10 @@ module Rasterization
             simp_sample_counts[1:n_current_cells[X], 1:n_current_cells[Y]] .= 0
 
             for i ∈ 1:ctx.n_simplex_points
-                l_face_points[i] = @view m43_simp_points[i,:]
+                l_simp_points[i] = @view m43_simp_points[i,:]
             end
 
-            for i ∈ 1:ctx.n_simplex_points
-                # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
-                # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes,
-                # it is inside the tetrahedron.
-                # Analogous for triangles but the fourth point is placed straight above the third one which
-                # allows the usage of the same point-in-simplex code afterwards.
-                v_p_excl = l_face_points[i]
-                v_p1 =     l_face_points[( i    % ctx.n_simplex_points) + 1]
-                v_p2 =     l_face_points[((i+1) % ctx.n_simplex_points) + 1]
-
-                v_p3 =
-                    if ctx.n_simplex_points == 4; l_face_points[((i+2) % 4) + 1]
-                    elseif ctx.n_simplex_points == 3; [v_p1[1], v_p1[2], v_p1[3] + 1.]
-                    else throw(DimensionMismatch("Only simplices with 3 or 4 points (read: triangles / tetrahedra) are supported."))
-                    end
-
-                # Calculate Hesse normal form of the plane defined by p1, p2, p3
-                # Normal vector
-                cross3!(v_p2-v_p1, v_p3-v_p1, v_n)
-                ctx.n_simplex_points == 3 && @assert (v_n[3] == 0.) "Normal vector of 2D line has non-zero z component!"
-                normalize!(v_n)
-
-                # n1x1 + n2x2 + n3x3 + d = 0; solve for d
-                d = -dot3(v_p1, v_n)
-                dist_p_excl = dot3(v_p_excl, v_n) + d
-
-                # Ensure that p_excl is considered to be on the "positive" side of the plane
-                if dist_p_excl < 0
-                    v_n = -v_n
-                    d = -d
-                end
-
-                l_tet_faces[i] = HesseNormalForm((v_n[1], v_n[2], v_n[3]), d)
-            end # for i
-
-            @inline function is_in_simplex()
-                # For each tetrahedron face, filter out cells that are not in the tetrahedron
-                for i ∈ 1:ctx.n_simplex_points
-                    face = l_tet_faces[i]
-                    # p_excl is ALWAYS on the "positive" side of the plane.
-                    # So, if p_excl and p lie on the same side, p is inside the tetrahedron
-                    dist_p = dot3(v_p, face.n0) + face.d
-
-                    # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
-                    # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
-                    # Therefore, we only need to check if dist_p is negative to reject p.
-                    if dist_p < -EDGE_TOL
-                        return false
-                    end
-
-                    # The point lies approx. ON the face, reject in the tet on the lexicographically
-                    # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
-                    # only accepted for one of them.
-                    # Def.: lexicographical order:
-                    #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
-                    # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
-                    # normal vector in contrast to its negated counterpart.
-                    if (abs(dist_p) <= EDGE_TOL)
-                        is_positive_side =
-                            (face.n0[X]  > 0.) ||
-                            (face.n0[X] == 0. && face.n0[Y]  > 0.) ||
-                            (face.n0[X] == 0. && face.n0[Y] == 0. && face.n0[Z] > 0.)
-
-                        # Reject if in tetrahedron on face's lex. negative side
-                        if !is_positive_side
-                            return false
-                        end
-                    end
-                end # for i
-
-                return true
-            end
+            calculate_hnfs!(ctx, l_simp_points, l_simp_hnfs)
 
             #============================================#
             # Sample each cuboid that is overlapping the
@@ -687,14 +615,14 @@ module Rasterization
                         for idx_g_z ∈ idx_g_min[Z]:idx_g_max[Z]
                             v_p[3] = (idx_g_z-1) * ctx.sampling_rate[Z] + ctx.domain[Z][MIN]
 
-                            if is_in_simplex() # accept cell and increment its 2D cell counter for the current tetrahedron by 1
+                            if is_in_simplex(ctx, l_simp_hnfs, v_p) # accept cell and increment its 2D cell counter for the current tetrahedron by 1
                                 idx_l_x = idx_g_x - idx_g_min[X] + 1
                                 idx_l_y = idx_g_y - idx_g_min[Y] + 1
                                 itbuf.out_sample_counts[idx_l_x, idx_l_y] += 1
                             end
                         end # for z
                     else # processing triangles, immediately rasterize vars
-                        if is_in_simplex()
+                        if is_in_simplex(ctx, l_simp_hnfs, v_p)
                             idx_l_x = idx_g_x - idx_g_min[X] + 1
                             idx_l_y = idx_g_y - idx_g_min[Y] + 1
 
@@ -777,6 +705,91 @@ module Rasterization
 
             n_bin_rasterized += 1
         end # for tet_id
+    end
+
+    """
+        Calculates all 3 / 4 Hesse Normal Forms for the given simplex points.
+
+    # Arguments
+    - `ctx` The rasterization context
+    - `l_simp_points` a list of ctx.n_simplex_points column vectors.
+    - `l_simp_hnfs` a HesseNormalForm-array of size ctx.n_simplex_points. Will be populated with the calculated HNFs.
+    """
+    @inline function calculate_hnfs!(ctx, l_simp_points, l_simp_hnfs)
+        v_n = Array{Float64, 1}(undef, 3)
+
+        for i ∈ 1:ctx.n_simplex_points
+            # Exclude point i from the tetrahedron and consider the plane defined by the other 3 points
+            # If and only if (x,y,z) lies on the "positive" side (in normal direction) of all 4 planes,
+            # it is inside the tetrahedron.
+            # Analogous for triangles but the fourth point is placed straight above the third one which
+            # allows the usage of the same point-in-simplex code afterwards.
+            v_p_excl = l_simp_points[i]
+            v_p1     = l_simp_points[( i    % ctx.n_simplex_points) + 1]
+            v_p2     = l_simp_points[((i+1) % ctx.n_simplex_points) + 1]
+
+            v_p3 =
+                if ctx.n_simplex_points == 4; l_simp_points[((i+2) % 4) + 1]
+                elseif ctx.n_simplex_points == 3; [v_p1[1], v_p1[2], v_p1[3] + 1.]
+                else throw(DimensionMismatch("Only simplices with 3 or 4 points (read: triangles / tetrahedra) are supported."))
+                end
+
+            # Calculate Hesse normal form of the plane defined by p1, p2, p3
+            # Normal vector
+            cross3!(v_p2-v_p1, v_p3-v_p1, v_n)
+            ctx.n_simplex_points == 3 && @assert (v_n[3] == 0.) "Normal vector of 2D line has non-zero z component!"
+            normalize!(v_n)
+
+            # n1x1 + n2x2 + n3x3 - d = 0; solve for d
+            d = dot3(v_p1, v_n)
+            dist_p_excl = dot3(v_p_excl, v_n) - d
+
+            # Ensure that p_excl is considered to be on the "positive" side of the plane
+            if dist_p_excl < 0
+                v_n = -v_n
+                d = -d
+            end
+
+            l_simp_hnfs[i] = HesseNormalForm((v_n[1], v_n[2], v_n[3]), d)
+        end # for i
+    end
+
+    @inline function is_in_simplex(ctx, l_tet_faces, point)
+        # For each tetrahedron face, filter out cells that are not in the tetrahedron
+        for i ∈ 1:ctx.n_simplex_points
+            face = l_tet_faces[i]
+            # p_excl is ALWAYS on the "positive" side of the plane.
+            # So, if p_excl and p lie on the same side, p is inside the tetrahedron
+            dist_p = dot3(point, face.n0) - face.d
+
+            # If signs of distance vectors do not match, p and p_excl are on different sides of the plane (reject)
+            # As stated above, the normal vector n is chosen so that p_excl is on the POSITIVE side of the plane
+            # Therefore, we only need to check if dist_p is negative to reject p.
+            if dist_p < -EDGE_TOL
+                return false
+            end
+
+            # The point lies approx. ON the face, reject in the tet on the lexicographically
+            # more negative side of the face. This ensures that for two neighboring tetrahedra, the point is
+            # only accepted for one of them.
+            # Def.: lexicographical order:
+            #       a ≤ b ⟺ (a.x ≤ b.x) ∨ (a.x = b.x ∧ a.y ≤ b.y) ∨ (a.x = b.x ∧ a.y = b.y ∧ a.z ≤ b.z)
+            # This is a total ordering on all vectors in R^3 and will therefore always be larger for the "positive"
+            # normal vector in contrast to its negated counterpart.
+            if (abs(dist_p) <= EDGE_TOL)
+                is_positive_side =
+                    (face.n0[X]  > 0.) ||
+                    (face.n0[X] == 0. && face.n0[Y]  > 0.) ||
+                    (face.n0[X] == 0. && face.n0[Y] == 0. && face.n0[Z] > 0.)
+
+                # Reject if in tetrahedron on face's lex. negative side
+                if !is_positive_side
+                    return false
+                end
+            end
+        end # for i
+
+        return true
     end
 
     """
