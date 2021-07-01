@@ -5,10 +5,10 @@
 =#
 
 module NC
-    using NetCDF
+using NetCDF
     using Main.Args
 
-    export get_or_create_netcdf
+    export get_netcdf, create_netcdf
 
     t_atts      = Dict("units" => "seconds")
     vel_atts    = Dict("units" => "m/s")
