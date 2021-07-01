@@ -10,5 +10,6 @@
 *.h5
 *.xdmf
 *.xmf
+*.nc
 !test_resources/*
-profile.txt
+test_resources/test_output.nc
