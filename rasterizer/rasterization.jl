@@ -777,13 +777,7 @@ module Rasterization
     - `water_height`:       The water height as a number
     """
     @inline function is_bathy(triangle_points, water_height = 0.)
-        min = minimum(triangle_points[Z, :])
-        if abs(min - water_height) > 1e-6; return true; end # Check height condition
-
-        max = maximum(triangle_points[Z, :])
-        if abs(max - min) > 1e-6; return true; end # Check flatness condition
-
-        return false
+        return any(abs.(triangle_points[Z,:] .- water_height) .> 1e-8)
     end
 
     """
