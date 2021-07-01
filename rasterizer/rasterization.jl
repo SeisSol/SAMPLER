@@ -96,7 +96,8 @@ module Rasterization
         return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
     end
 
-    function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, water_height, t_begin, t_end, times, out_filename)
+    function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
+                                  tanioka, water_height, t_begin, t_end, times, out_filename; max_threads=typemax(Int))
         domain                          = Tuple( (minimum(points[i, :]), maximum(points[i, :]))                     for i in X:Z)
         samples                         = Tuple( ceil(UInt, (domain[i][MAX] - domain[i][MIN]) / sampling_rate[i])   for i in X:Z)
 
@@ -104,7 +105,7 @@ module Rasterization
         # Calculate problem size & hardware limitations
         #============================================#
 
-        n_threads                       = nthreads()
+        n_threads                       = min(max_threads, nthreads())
 
         n_simplex_points                = size(simplices, 1)
         n_dims                          = n_simplex_points - 1
@@ -291,37 +292,10 @@ module Rasterization
 
     end # function rasterize
 
-    function _bins_equal_load(ctx)
-        # Constant load factor per column
-        return ones(Float64, ctx.samples[X])
-    end
-
     function bin(ctx)
         println("Binning $(ctx.n_simplices) $(simplex_name(ctx)) into $(ctx.n_threads)+$(ctx.n_threads - 1)+1 buckets...")
 
-        # Assign a load factor to each x-column. Currently just 1.0 for each column, but dynamically calculating factors based on the simplices in each
-        # column might also be an option.
-        l_x_simps = _bins_equal_load(ctx)
-
-        # Now that each column has a load factor, size each bin such that the load is distributed evenly.
-        l_bin_start_idxs = Array{Int, 1}(undef, ctx.n_threads)
-        n_opt_simps_per_p_bin = sum(l_x_simps) / ctx.n_threads
-        l_bin_start_idxs[1] = 1
-
-        # Start from the left bin and add columns to it until its rounded load factor is closest to the optimal value (1/n_threads*total_load)
-        # Then continue with next bin
-        next_x_idx = 1
-        for bin_id ∈ 1:(ctx.n_threads-1)
-            current_simp_count = 0.
-            new_simp_count = 0.
-            while (n_opt_simps_per_p_bin - current_simp_count > new_simp_count - n_opt_simps_per_p_bin) && next_x_idx <= ctx.samples[X]
-                current_simp_count = new_simp_count
-                new_simp_count = current_simp_count + l_x_simps[next_x_idx]
-                next_x_idx += 1
-            end
-
-            l_bin_start_idxs[bin_id + 1] = min(next_x_idx, ctx.samples[X])
-        end
+        l_bin_start_idxs = [1 + round(Int, ctx.samples[X] / ctx.n_threads * bucket_id) for bucket_id ∈ 0:(ctx.n_threads-1)]
 
         #============================================#
         # Perform binning
@@ -334,17 +308,17 @@ module Rasterization
             thread_range_min = floor(Int, (thread_id - 1) * ctx.simplices_per_thread) + 1
             thread_range_max = thread_id == ctx.n_threads ? ctx.n_simplices : floor(Int, thread_id * ctx.simplices_per_thread)
 
-            m43_tet_points = Array{Float64, 2}(undef, (ctx.n_simplex_points, 3))
+            m3n_simp_points = Array{Float64, 2}(undef, (3, ctx.n_simplex_points))
 
             for tet_id ∈ thread_range_min:thread_range_max
                 tetrahedron = (@view ctx.simplices[:, tet_id])
                 for i ∈ 1:ctx.n_simplex_points
-                    m43_tet_points[i, :] = ctx.points[:, tetrahedron[i]]
+                    m3n_simp_points[:, i] = ctx.points[:, tetrahedron[i]]
                 end
 
-                # Simplex is not in the z-domain (only possible if z_range ∈ [z_floor, z_surface]), ignore it.
+                # If simplex is not in the z-domain (only possible if z_range ∈ [z_floor, z_surface]), ignore it.
                 if ctx.z_range != z_all
-                    is_bath = is_bathy(m43_tet_points, ctx.water_height)
+                    is_bath = is_bathy(m3n_simp_points, ctx.water_height)
 
                     if (ctx.z_range == z_floor) != is_bath
                         l_bin_ids[tet_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
@@ -352,16 +326,16 @@ module Rasterization
                     end
                 else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
                     # TODO: correct z filter for tetrahedra
-                    coord_z_min = minimum(m43_tet_points[:, 3])
-                    coord_z_max = maximum(m43_tet_points[:, 3])
+                    coord_z_min = minimum(m3n_simp_points[Z, :])
+                    coord_z_max = maximum(m3n_simp_points[Z, :])
                     if coord_z_max <= 0.00001
                         l_bin_ids[tet_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
                 end
 
-                coord_x_min = minimum(m43_tet_points[:, 1])
-                coord_x_max = maximum(m43_tet_points[:, 1])
+                coord_x_min = minimum(m3n_simp_points[X, :])
+                coord_x_max = maximum(m3n_simp_points[X, :])
 
                 idx_x_min = floor(Int,(coord_x_min - ctx.domain[X][MIN]) / ctx.sampling_rate[X]) + 1
                 idx_x_max =  ceil(Int,(coord_x_max - ctx.domain[X][MIN]) / ctx.sampling_rate[X])
@@ -509,7 +483,7 @@ module Rasterization
         # rasterization by this thread
         #============================================#
 
-        m43_simp_points     = Array{Float64, 2}(undef, (ctx.n_simplex_points, 3))
+        m43_simp_points     = Array{Float64, 2}(undef, (ctx.n_simplex_points, 3)) #todo transpose
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
         l_simp_points       = Array{SubArray, 1}(undef, ctx.n_simplex_points)
         l_simp_hnfs         = Array{HesseNormalForm, 1}(undef, ctx.n_simplex_points)
@@ -804,11 +778,11 @@ module Rasterization
     - `water_height`:       The water height as a number
     """
     @inline function is_bathy(triangle_points, water_height = 0.)
-        min = minimum(triangle_points[:, 3])
-        if abs(min - water_height) > 1e-8; return true; end # Check height condition
+        min = minimum(triangle_points[Z, :])
+        if abs(min - water_height) > 1e-6; return true; end # Check height condition
 
-        max = maximum(triangle_points[:, 3])
-        if abs(max - min) > 1e-8; return true; end # Check flatness condition
+        max = maximum(triangle_points[Z, :])
+        if abs(max - min) > 1e-6; return true; end # Check flatness condition
 
         return false
     end

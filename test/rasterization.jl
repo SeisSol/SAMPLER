@@ -1,3 +1,4 @@
+using Plots: isnothing
 include("../io/util.jl")
 include("../io/args.jl")
 include("../io/netcdf.jl")
@@ -5,6 +6,8 @@ include("../io/xdmf.jl")
 include("../rasterizer/rasterization.jl")
 
 using Test
+using Base.Threads
+using Plots
 
 ATOL=0.05
 
@@ -24,14 +27,18 @@ function make_context(simplices, points;
                       t_begin=0,
                       t_end=0,
                       times=[0.],
-                      out_filename="temp.nc")
+                      out_filename="temp.nc",
+                      max_threads=typemax(Int))
                       
     Rasterization.RasterizationContext(simplices, points, sampling_rate, mem_limit, 
                                        dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
-                                       water_height, t_begin, t_end, times, out_filename)
+                                       water_height, t_begin, t_end, times, out_filename, max_threads=max_threads)
 end
 
 @testset "Rasterization" begin
+    if nthreads() == 1
+        error("Binning tests only work in a multi-threaded environment. Please run with at least 3 threads.")
+    end
 
     simplices2D = [[1, 2, 3   ] [2, 3, 4   ]]
     simplices3D = [[1, 2, 3, 4] [2, 3, 4, 5]]
@@ -45,7 +52,11 @@ end
     points3D = [A B C D E]
 
     dimensions = Dict(2=>(simplices=simplices2D, points=points2D),
-                     3=>(simplices=simplices3D, points=points3D))
+                      3=>(simplices=simplices3D, points=points3D))
+
+    #============================================#
+    # calculate_hnfs!
+    #============================================#
 
     # Each case is [Dimension, Simplex Index, Simplex HNFs]
     hnf_test_cases = [
@@ -80,6 +91,10 @@ end
         end
     end
 
+    #============================================#
+    # is_in_simplex
+    #============================================#
+
     is_in_test_cases = [
         (dim=2, 
         simp_idx=1,
@@ -105,10 +120,95 @@ end
         end
     end
     
-    @testset "is_bathy" begin end
-    Rasterization.is_bathy
-    @testset "bin" begin end
-    Rasterization.bin
+    #============================================#
+    # is_bathy
+    #============================================#
+
+    is_bathy_test_cases = [
+        (bathy_heights=[1998., 2001., 2001.], water_height=2000., is_bathy=true),
+        (bathy_heights=[-20., -19., -17.], water_height=0., is_bathy=true),
+        (bathy_heights=[-20., -20., -20.], water_height=0., is_bathy=true),
+        (bathy_heights=[0., 0., 0.], water_height=20., is_bathy=true),
+        (bathy_heights=[0., 0., 0.], water_height=0., is_bathy=false),
+        (bathy_heights=[2000., 2000., 2000.], water_height=2000., is_bathy=false),
+        (bathy_heights=[2001., 2001., 2001.], water_height=2000., is_bathy=true)
+    ]
+
+    @testset "is_bathy (wh=$(test_case.water_height), b=$(test_case.bathy_heights))" for test_case ∈ is_bathy_test_cases
+        bathys = test_case.bathy_heights
+        points = [[1., 1., bathys[1]] [4., 4., bathys[2]] [2., 2., bathys[3]]]
+        @test test_case.is_bathy == Rasterization.is_bathy(points, test_case.water_height)
+    end
+
+    #============================================#
+    # bin
+    #============================================#
+
+    nBins = 3
+    cX = nBins*3
+    cY = 9
+    cZ = 1
+    points = zeros((3, (cX+1)*(cY+1)*(cZ+1)))
+    for i ∈ 0:size(points,2)-1
+        points[:, i+1] = [i % (cX+1), i ÷ (cX+1) % (cY+1), i ÷ ((cX+1) * (cY+1)) % (cZ+1)]
+    end
+
+    tup2idx = (x, y, z) -> (x + (cX+1) * (y + (cY+1) * z) + 1)
+
+    for z ∈ 0:cZ, y ∈ 0:cY, x ∈ 0:cX
+        p = points[:,tup2idx(x,y,z)]
+        if tuple(p...) != (x,y,z)
+            println("$((x,y,z)) != $p")
+        end
+    end
+
+    simplices2D = []
+    bin_ids = []
+    z = 0
+    water_height = 1.
+    for z ∈ 0:cZ, y ∈ 0:0, x ∈ 0:cX-1
+        # For each (x,y,z), which we define as the left upper point of the triangle, add two triangles:
+        # (x,y  ,z)  o---o (x+1,y  ,z)
+        #            |\ 1|
+        #            | \ |
+        #            |2 \|
+        # (x,y+1,z)  o---o (x+1,y+1,z)
+        push!(simplices2D, [tup2idx(x, y, z), tup2idx(x+1, y, z), tup2idx(x+1, y+1, z)])
+        push!(simplices2D, [tup2idx(x, y, z), tup2idx(x+1, y+1, z), tup2idx(x, y+1, z)])
+        bin_id = z < water_height ? 1 + x ÷ (cX ÷ nBins) : 2 * nBins + 1
+        push!(bin_ids, bin_id)
+        push!(bin_ids, bin_id)
+    end
+
+    for z ∈ 0:cZ, y ∈ 0:0, xBin ∈ 1:nBins-1
+        # Triangles all span one bucket border
+        x=(cX ÷ nBins)*xBin-1
+        push!(simplices2D, [tup2idx(x, y, z), tup2idx(x+2, y, z), tup2idx(x+2, y+1, z)])
+        push!(simplices2D, [tup2idx(x, y, z), tup2idx(x+2, y+1, z), tup2idx(x, y+1, z)])
+        bin_id = z < water_height ? nBins + xBin : 2 * nBins + 1
+        push!(bin_ids, bin_id)
+        push!(bin_ids, bin_id)
+    end
+
+    for z ∈ 0:cZ, y ∈ 0:0
+        # Triangles all span multiple borders
+        push!(simplices2D, [tup2idx(1, y, z), tup2idx(cX, y, z), tup2idx(cX, y+1, z)])
+        push!(simplices2D, [tup2idx(1, y, z), tup2idx(cX, y+1, z), tup2idx(1, y+1, z)])
+        bin_id = z < water_height ? 2 * nBins : 2 * nBins + 1
+        push!(bin_ids, bin_id)
+        push!(bin_ids, bin_id)
+    end
+
+    simplices2D = [simplices2D[i][dim] for dim ∈ 1:3, i ∈ 1:length(simplices2D)]
+
+    @testset "bin" begin
+        ctx = make_context(simplices2D, points, sampling_rate=(1., 1., 1.), water_height=water_height, z_range=Rasterization.z_floor, max_threads=3)
+        l_bin_ids, l_bin_counts = Rasterization.bin(ctx)
+
+        for i ∈ 1:size(simplices2D,2)
+            @test bin_ids[i] == l_bin_ids[i]
+        end
+    end
     @testset "iterate" begin end
     Rasterization.iterate
     @testset "iterate_simps!" begin end
@@ -120,4 +220,3 @@ end
     @testset "bary_coords_2d" begin end
     Rasterization.bary_coords_2d
 end
-
