@@ -483,7 +483,7 @@ module Rasterization
         # rasterization by this thread
         #============================================#
 
-        m43_simp_points     = Array{Float64, 2}(undef, (ctx.n_simplex_points, 3)) #todo transpose
+        m43_simp_points     = Array{Float64, 2}(undef, (3, ctx.n_simplex_points))
         m32_tet_aabb        = Array{Float64, 2}(undef, (3, 2))
         l_simp_points       = Array{SubArray, 1}(undef, ctx.n_simplex_points)
         l_simp_hnfs         = Array{HesseNormalForm, 1}(undef, ctx.n_simplex_points)
@@ -526,14 +526,13 @@ module Rasterization
             end # if print_progress
 
             # Read simplex points. m43 is only filled with 3x3 values for triangles
-            simplex_point_idxs = (@view ctx.simplices[:, simp_id])
             for i ∈ 1:ctx.n_simplex_points
-                m43_simp_points[i, X:Z] = ctx.points[X:Z, simplex_point_idxs[i]]
+                m43_simp_points[:, i] = ctx.points[:, ctx.simplices[i, simp_id]]
             end
 
             for dim ∈ X:Z
-                m32_tet_aabb[dim, MIN] = minimum(m43_simp_points[:, dim])
-                m32_tet_aabb[dim, MAX] = maximum(m43_simp_points[:, dim])
+                m32_tet_aabb[dim, MIN] = minimum(m43_simp_points[dim, :])
+                m32_tet_aabb[dim, MAX] = maximum(m43_simp_points[dim, :])
             end
 
             #============================================#
@@ -565,7 +564,7 @@ module Rasterization
             simp_sample_counts[1:n_current_cells[X], 1:n_current_cells[Y]] .= 0
 
             for i ∈ 1:ctx.n_simplex_points
-                l_simp_points[i] = @view m43_simp_points[i,:]
+                l_simp_points[i] = @view m43_simp_points[:,i]
             end
 
             calculate_hnfs!(ctx, l_simp_points, l_simp_hnfs)
@@ -579,15 +578,15 @@ module Rasterization
             #============================================#
 
             for idx_g_x ∈ idx_g_min[X]:idx_g_max[X]
-                v_p[1] = (idx_g_x-1) * ctx.sampling_rate[X] + ctx.domain[X][MIN]
+                v_p[X] = (idx_g_x-1) * ctx.sampling_rate[X] + ctx.domain[X][MIN]
 
                 for idx_g_y ∈ idx_g_min[Y]:idx_g_max[Y]
-                    v_p[2] = (idx_g_y-1) * ctx.sampling_rate[Y] + ctx.domain[Y][MIN]
+                    v_p[Y] = (idx_g_y-1) * ctx.sampling_rate[Y] + ctx.domain[Y][MIN]
 
                     if ctx.n_simplex_points == 4 # processing tets, increment counter for intersected cells
 
                         for idx_g_z ∈ idx_g_min[Z]:idx_g_max[Z]
-                            v_p[3] = (idx_g_z-1) * ctx.sampling_rate[Z] + ctx.domain[Z][MIN]
+                            v_p[Z] = (idx_g_z-1) * ctx.sampling_rate[Z] + ctx.domain[Z][MIN]
 
                             if is_in_simplex(ctx, l_simp_hnfs, v_p) # accept cell and increment its 2D cell counter for the current tetrahedron by 1
                                 idx_l_x = idx_g_x - idx_g_min[X] + 1
@@ -605,7 +604,7 @@ module Rasterization
                                 v_λ = bary_coords_2d(v_p, m43_simp_points)
 
                                 # Calculate bathymetry height from triangle's z-coords and interpolate between them
-                                b = sum(m43_simp_points[1:3,Z] .* v_λ)
+                                b = sum(m43_simp_points[Z,1:3] .* v_λ)
                                 itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y] = b
                             end
 
@@ -614,12 +613,12 @@ module Rasterization
 
                                 # ∂b/∂x
                                 v_λ = bary_coords_2d(v_p .+ (1., 0., 0.), m43_simp_points)
-                                b = sum(m43_simp_points[1:3,Z] .* v_λ)
+                                b = sum(m43_simp_points[Z,1:3] .* v_λ)
                                 ∂b∂x = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
 
                                 # ∂b/∂y
                                 v_λ = bary_coords_2d(v_p .+ (0., 1., 0.), m43_simp_points)
-                                b = sum(m43_simp_points[1:3,Z] .* v_λ)
+                                b = sum(m43_simp_points[Z,1:3] .* v_λ)
                                 ∂b∂y = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
 
                                 for t ∈ 1:n_times
@@ -808,18 +807,18 @@ module Rasterization
     """
     @inline function bary_coords_2d(p :: Array{Float64, 1}, ps :: Array{Float64, 2}) :: NTuple{3, Float64}
         @assert length(p) >= 2
-        @assert size(ps, 1) >= 3
-        @assert size(ps, 2) >= 2
+        @assert size(ps, 1) >= 2
+        @assert size(ps, 2) >= 3
 
-        T11 = ps[1, 1] - ps[3, 1]
-        T12 = ps[2, 1] - ps[3, 1]
-        T21 = ps[1, 2] - ps[3, 2]
-        T22 = ps[2, 2] - ps[3, 2]
+        T11 = ps[X, 1] - ps[X, 3]
+        T12 = ps[X, 2] - ps[X, 3]
+        T21 = ps[Y, 1] - ps[Y, 3]
+        T22 = ps[Y, 2] - ps[Y, 3]
 
         det = T11 * T22 - T12 * T21
 
-        λ1 = (T22*(p[1]-ps[3,1]) - T12*(p[2]-ps[3,2])) / det
-        λ2 = (T11*(p[2]-ps[3,2]) - T21*(p[1]-ps[3,1])) / det
+        λ1 = (T22*(p[X]-ps[X,3]) - T12*(p[Y]-ps[Y,3])) / det
+        λ2 = (T11*(p[Y]-ps[Y,3]) - T21*(p[X]-ps[X,3])) / det
         λ3 = 1. - λ1 - λ2
 
         return (λ1, λ2, λ3)

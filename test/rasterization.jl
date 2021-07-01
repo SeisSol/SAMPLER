@@ -1,4 +1,4 @@
-using Plots: isnothing
+using Plots: isnothing, calc_num_subplots
 include("../io/util.jl")
 include("../io/args.jl")
 include("../io/netcdf.jl")
@@ -217,6 +217,31 @@ end
     Rasterization.cross3!
     @testset "dot3" begin end
     Rasterization.dot3
-    @testset "bary_coords_2d" begin end
-    Rasterization.bary_coords_2d
+
+    #============================================#
+    # bary_coords_2d
+    #============================================#
+
+    triangle = [[-2., 1., 14.] [1., 3., 13.] [-1., -1., 12.]]
+
+    bary_test_cases = [
+        (point=triangle[:, 1],                           bary=(  1.,   0.,   0.)),
+        (point=triangle[:, 2],                           bary=(  0.,   1.,   0.)),
+        (point=triangle[:, 3],                           bary=(  0.,   0.,   1.)),
+        (point=sum(triangle,           dims=2)[:,1] / 3, bary=(1/3 , 1/3 , 1/3 )),
+        (point=sum(triangle[:, 1:2],   dims=2)[:,1] / 2, bary=(1/2 , 1/2 ,   0.)),
+        (point=sum(triangle[:, 2:3],   dims=2)[:,1] / 2, bary=(  0., 1/2 , 1/2 )),
+        (point=sum(triangle[:, 1:2:3], dims=2)[:,1] / 2, bary=(1/2 ,   0., 1/2 )),
+
+        (point=triangle[:, 1] + 2 * (triangle[:, 2] - triangle[:, 1]), bary=(-1.,  2., 0.)),
+        (point=triangle[:, 1] + 2 * (triangle[:, 3] - triangle[:, 1]), bary=(-1.,  0., 2.)),
+        (point=triangle[:, 2] + 2 * (triangle[:, 3] - triangle[:, 2]), bary=( 0., -1., 2.)),
+    ]
+
+    @testset "bary_coords_2d" for test_case ∈ bary_test_cases
+        calculated_bary = Rasterization.bary_coords_2d(test_case.point, triangle)
+        for dim ∈ 1:3
+            @test test_case.bary[dim] ≈ calculated_bary[dim] atol=1e-6
+        end
+    end
 end
