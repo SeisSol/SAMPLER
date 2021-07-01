@@ -59,11 +59,11 @@ using NetCDF
         dynamic_vars = []
 
         for stat_mapping ∈ static_var_mappings
-            append!(static_vars,  map(in_var -> NcVar(stat_mapping[in_var], [x_dim, y_dim],        atts=get_units(in_var)), collect(keys(stat_mapping))))
+            append!(static_vars,  map(in_var -> NcVar(stat_mapping[in_var], [y_dim, x_dim],        atts=get_units(in_var)), collect(keys(stat_mapping))))
         end
 
         for dyn_mapping ∈ dynamic_var_mappings
-            append!(dynamic_vars, map(in_var -> NcVar(dyn_mapping[in_var],  [x_dim, y_dim, t_dim], atts=get_units(in_var)), collect(keys(dyn_mapping))))
+            append!(dynamic_vars, map(in_var -> NcVar(dyn_mapping[in_var],  [y_dim, x_dim, t_dim], atts=get_units(in_var)), collect(keys(dyn_mapping))))
         end
 
         

@@ -401,7 +401,7 @@ module Rasterization
             var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(xdmf, t_start, t_stop, ctx.in_vars_dyn)
 
             for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
-                copyto!(itbuf.prefetched_vars[var_name][1:ctx.n_simplices, t], var_bufs[var_name][t][1:ctx.n_simplices])
+                copyto!(itbuf.prefetched_vars[var_name], 1 + (t-1) * ctx.n_simplices, var_bufs[var_name][t], 1, ctx.n_simplices)
             end
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.

@@ -37,7 +37,7 @@ function main()
     
     seafloor_vars   = ARGS["seafloor-vars"]
     surface_vars    = ARGS["surface-vars"]
-    volumetric_vars = ARGS["volumetric-vars"]
+    volumetric_vars = has_3d ? ARGS["volumetric-vars"] : Dict{String,String}()
     
     water_height    = ARGS["water-height"]
     has_tanioka     = ARGS["tanioka"]
