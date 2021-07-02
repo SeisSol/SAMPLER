@@ -16,6 +16,7 @@ module Args
 
     VarMapping      = Dict{String, String}
     SamplingTuple   = NTuple{3, Float64}
+    DomainSize      = NTuple{2, NTuple{2, Float64}} # ((xmin,xmax), (ymin,ymax))
 
     struct Timespan{T <: Number}
         t_start :: T
@@ -110,6 +111,21 @@ module Args
         end
     end
 
+    function ArgParse.parse_item(::Type{DomainSize}, x::AbstractString)
+        floats = split(x, ',')
+
+        if length(floats != 4)
+            throw(ArgumentError(""""$x" is not in the format "xmin,xmax,ymin,ymax"!"""))
+        end
+
+        try
+            floats = tuple(map(x -> parse(Float64, x), components)...)
+            return ((floats[1], floats[2]), (floats[3], floats[4]))
+        catch
+            throw(ArgumentError("""The components of "$x" cannot be parsed as numbers!"""))
+        end
+    end
+
     function read_args()
         parser_settings = ArgParseSettings()
         @add_arg_table! parser_settings begin
@@ -132,6 +148,11 @@ module Args
                                 \t If start or end is an empty string, it will be assumed to be 0 or infinity respectively.\n
                                 \t By default, every timestep will be output."""
                 arg_type = Timespan{UInt64}
+            "--domain", "-d"
+                help = """Specify a custom domain which should be rasterized. Format: "xmin,xmax,ymin,ymax".\n
+                                \t By default, the whole domain will be rasterized. The specified domain will be clipped to the actual domain."""
+                arg_type = DomainSize
+                default = ((-Inf, Inf), (-Inf, Inf))
             "--sampling-rate", "-r"
                 help = """The size in meters of one cell edge in the resampled output.\n
                                 \t Format: dx[,dy,dz]. If only dx is given, dy and dz will be set equal to dx.\n

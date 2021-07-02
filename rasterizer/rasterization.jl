@@ -97,8 +97,12 @@ module Rasterization
     end
 
     function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
-                                  tanioka, water_height, t_begin, t_end, times, out_filename; max_threads=typemax(Int))
-        domain                          = Tuple( (minimum(points[i, :]), maximum(points[i, :]))                     for i in X:Z)
+                                  tanioka, water_height, t_begin, t_end, times, out_filename, custom_domain; max_threads=typemax(Int))
+
+        custom_domain                   = (custom_domain..., (-Inf, Inf)) # Add z-range
+        domain                          = Tuple( (max(minimum(points[i, :]), custom_domain[i][MIN]), 
+                                                  min(maximum(points[i, :]), custom_domain[i][MAX]))                for i in X:Z)
+
         samples                         = Tuple( ceil(UInt, (domain[i][MAX] - domain[i][MIN]) / sampling_rate[i])   for i in X:Z)
 
         #============================================#
@@ -221,12 +225,13 @@ module Rasterization
         create_nc_dyn_vars  :: Array{Main.Args.VarMapping, 1} = Array{Main.Args.VarMapping, 1}(),
         create_nc_stat_vars :: Array{Main.Args.VarMapping, 1} = Array{Main.Args.VarMapping, 1}(),
         water_height        :: Float64 = 0.,
-        tanioka             :: Bool    = false)
+        tanioka             :: Bool    = false,
+        domain              :: Main.Args.DomainSize = ((-Inf, Inf),(-Inf, Inf)))
 
         simplices, points = grid_of(xdmf)
 
         ctx = RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
-                                   water_height, t_begin, t_end, times, out_filename)
+                                   water_height, t_begin, t_end, times, out_filename, domain)
 
         #============================================#
         # Print rasterization settings

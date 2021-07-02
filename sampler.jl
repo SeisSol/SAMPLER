@@ -31,6 +31,7 @@ function main()
 
     mem_limit       = ARGS["memory-limit"]
     sampling_rate   = ARGS["sampling-rate"]
+    domain          = ARGS["domain"]
 
     has_3d          = !isempty(ARGS["input-file-3d"])
     seafloor_only   = ARGS["seafloor-only"]
@@ -106,7 +107,7 @@ function main()
                             create_nc_dyn_vars=[seafloor_vars, surface_vars, volumetric_vars],
                             create_nc_stat_vars=[stat_var_mapping],
                             z_range=Rasterization.z_floor, t_begin=t_start, t_end=t_end, water_height=water_height, 
-                            tanioka=has_tanioka)
+                            tanioka=has_tanioka, domain=domain)
 
     GC.gc(true)
 
@@ -116,7 +117,8 @@ function main()
 
     if surface_output
         Rasterization.rasterize(xdmf2d, surface_vars, empty_mapping, times, sampling_rate, out_filename, mem_limit; 
-                                z_range=Rasterization.z_surface, t_begin=t_start, t_end=t_end, water_height=water_height)
+                                z_range=Rasterization.z_surface, t_begin=t_start, t_end=t_end, water_height=water_height,
+                                domain=domain)
     end
 
 
@@ -131,7 +133,8 @@ function main()
         xdmf3d = XDMF.XDMFFile(ARGS["input-file-3d"])
 
         Rasterization.rasterize(xdmf3d, volumetric_vars, empty_mapping, times, sampling_rate, out_filename, mem_limit; 
-                                z_range=Rasterization.z_all, t_begin=t_start, t_end=t_end, water_height=water_height)
+                                z_range=Rasterization.z_all, t_begin=t_start, t_end=t_end, water_height=water_height,
+                                domain=domain)
     end
 end
 
