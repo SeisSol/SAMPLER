@@ -119,7 +119,7 @@ module Args
         end
 
         try
-            floats = tuple(map(x -> parse(Float64, x), components)...)
+            floats = tuple(map(x -> parse(Float64, x), floats)...)
             return ((floats[1], floats[2]), (floats[3], floats[4]))
         catch
             throw(ArgumentError("""The components of "$x" cannot be parsed as numbers!"""))
