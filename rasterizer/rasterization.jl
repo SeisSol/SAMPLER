@@ -402,7 +402,7 @@ using Base.Threads
             if bin_id != 1 && (bin_id - 1) % bins_per_line == 0
                 println()
             end
-            bin_chars = ceil(Int, log10(l_bin_counts[bin_id]))
+            bin_chars = floor(Int, max(1, log10(l_bin_counts[bin_id])))
             print(' '^(max_chars_per_bin-bin_chars+1), l_bin_counts[bin_id])
         end
         println()
