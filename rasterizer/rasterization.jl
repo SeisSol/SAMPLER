@@ -6,7 +6,8 @@ rasterization.jl:
 =#
 
 module Rasterization
-    using Base.Threads
+    using Dates: length
+using Base.Threads
     using LinearAlgebra
     using Dates
     using Printf
@@ -300,6 +301,9 @@ module Rasterization
     function bin(ctx)
         println("Binning $(ctx.n_simplices) $(simplex_name(ctx)) into $(ctx.n_threads)+$(ctx.n_threads - 1)+1 buckets...")
 
+        n_excluded_domain = 0
+        n_excluded_z_range = 0
+
         l_bin_start_idxs = [1 + round(Int, ctx.samples[X] / ctx.n_threads * bucket_id) for bucket_id ∈ 0:(ctx.n_threads-1)]
 
         #============================================#
@@ -328,6 +332,7 @@ module Rasterization
 
                 if coord_x_max <= ctx.domain[X][MIN] || coord_x_min >= ctx.domain[X][MAX] || coord_y_max <= ctx.domain[Y][MIN] || coord_y_min >= ctx.domain[Y][MAX]
                     l_bin_ids[simp_id] = ctx.n_threads * 2 + 1
+                    n_excluded_domain += 1
                     continue
                 end
 
@@ -337,6 +342,7 @@ module Rasterization
 
                     if (ctx.z_range == z_floor) != is_bath
                         l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
+                        n_excluded_z_range += 1
                         continue
                     end
                 else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
@@ -345,6 +351,7 @@ module Rasterization
                     coord_z_max = maximum(m3n_simp_points[Z, :])
                     if coord_z_max <= 0.00001
                         l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
+                        n_excluded_z_range += 1
                         continue
                     end
                 end
@@ -386,8 +393,26 @@ module Rasterization
             println(l_bin_counts[bin_id], " ", simplex_name(ctx), " in bin ", bin_id)
         end
 
-        if ctx.z_range != z_all
-            println(l_bin_counts[length(l_bin_counts)], " ", simplex_name(ctx), " are ignored due to z_range filter.")
+        max_chars_per_bin = ceil(Int, log10(maximum(l_bin_counts)))
+        chars_per_line = 120
+        bins_per_line = max(1, (chars_per_line ÷ (max_chars_per_bin + 1)) ÷ 8 * 8)
+
+        println("Bin Counts:")
+        for bin_id ∈ 1:length(l_bin_counts) - 1
+            if bin_id != 1 && (bin_id - 1) % bins_per_line == 0
+                println()
+            end
+            bin_chars = ceil(Int, log10(l_bin_counts[bin_id]))
+            print(' '^(max_chars_per_bin-bin_chars+1), l_bin_counts[bin_id])
+        end
+        println()
+
+        if n_excluded_domain != 0
+            println(n_excluded_domain, " ", simplex_name(ctx), " are ignored due to domain filter.")
+        end
+
+        if n_excluded_z_range != 0
+            println(n_excluded_z_range, " ", simplex_name(ctx), " are ignored due to z_range filter.")
         end
 
         println("Done.")
