@@ -315,8 +315,8 @@ module Rasterization
 
             m3n_simp_points = Array{Float64, 2}(undef, (3, ctx.n_simplex_points))
 
-            for tet_id ∈ thread_range_min:thread_range_max
-                tetrahedron = (@view ctx.simplices[:, tet_id])
+            for simp_id ∈ thread_range_min:thread_range_max
+                tetrahedron = (@view ctx.simplices[:, simp_id])
                 for i ∈ 1:ctx.n_simplex_points
                     m3n_simp_points[:, i] = ctx.points[:, tetrahedron[i]]
                 end
@@ -326,8 +326,8 @@ module Rasterization
                 coord_y_min = minimum(m3n_simp_points[Y, :])
                 coord_y_max = maximum(m3n_simp_points[Y, :])
 
-                if coord_x_max < ctx.domain[X][MIN] || coord_x_min > ctx.domain[X][MAX] || coord_y_max < ctx.domain[Y][MIN] || coord_y_min > ctx.domain[Y][MAX]
-                    l_bin_ids[tet_id] = ctx.n_threads * 2 + 1
+                if coord_x_max <= ctx.domain[X][MIN] || coord_x_min >= ctx.domain[X][MAX] || coord_y_max <= ctx.domain[Y][MIN] || coord_y_min >= ctx.domain[Y][MAX]
+                    l_bin_ids[simp_id] = ctx.n_threads * 2 + 1
                     continue
                 end
 
@@ -336,7 +336,7 @@ module Rasterization
                     is_bath = is_bathy(m3n_simp_points, ctx.water_height)
 
                     if (ctx.z_range == z_floor) != is_bath
-                        l_bin_ids[tet_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
+                        l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
                 else # This would be were tetrahedra in the volume mesh that belong to the ground are filtered out. For now: cutoff below -2000m
@@ -344,7 +344,7 @@ module Rasterization
                     coord_z_min = minimum(m3n_simp_points[Z, :])
                     coord_z_max = maximum(m3n_simp_points[Z, :])
                     if coord_z_max <= 0.00001
-                        l_bin_ids[tet_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
+                        l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
                         continue
                     end
                 end
@@ -361,11 +361,11 @@ module Rasterization
                 # bin j ∈ n_bins+1:2*n_bins-1 contains tets that are overlapping across bin i and i+1
                 # bin k = 2*n_bins contains tets overlapping over more than 2 adjascent columns
                 if bin_id_l == bin_id_r
-                    l_bin_ids[tet_id] = bin_id_l
+                    l_bin_ids[simp_id] = bin_id_l
                 elseif bin_id_l == bin_id_r - 1
-                    l_bin_ids[tet_id] = ctx.n_threads + bin_id_l
+                    l_bin_ids[simp_id] = ctx.n_threads + bin_id_l
                 else
-                    l_bin_ids[tet_id] = 2 * ctx.n_threads
+                    l_bin_ids[simp_id] = 2 * ctx.n_threads
                 end
             end # for tet_id
         end # for thread_id
