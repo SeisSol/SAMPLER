@@ -563,6 +563,9 @@ module Rasterization
                           ceil(Int32, (m32_tet_aabb[  Y,MAX] - ctx.domain[  Y][MIN]) / ctx.sampling_rate[  Y]),
                          floor(Int32, (m32_tet_aabb[  Z,MAX] - ctx.domain[  Z][MIN]) / ctx.sampling_rate[  Z]) + 1)
 
+            idx_g_min = Tuple(max(1               , idx_g_min[dim]) for dim ∈ X:Z)
+            idx_g_max = Tuple(min(ctx.samples[dim], idx_g_min[dim]) for dim ∈ X:Z)
+
             n_current_cells = idx_g_max .- idx_g_min .+ 1
 
             # If the current simp has a bounding box larger than anticipated, enlarge the sample counts array accordingly
