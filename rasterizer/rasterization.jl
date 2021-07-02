@@ -321,6 +321,16 @@ module Rasterization
                     m3n_simp_points[:, i] = ctx.points[:, tetrahedron[i]]
                 end
 
+                coord_x_min = minimum(m3n_simp_points[X, :])
+                coord_x_max = maximum(m3n_simp_points[X, :])
+                coord_y_min = minimum(m3n_simp_points[Y, :])
+                coord_y_max = maximum(m3n_simp_points[Y, :])
+
+                if coord_x_max < ctx.domain[X][MIN] || coord_x_min > ctx.domain[X][MAX] || coord_y_max < ctx.domain[Y][MIN] || coord_y_min > ctx.domain[Y][MAX]
+                    l_bin_ids[tet_id] = ctx.n_threads * 2 + 1
+                    continue
+                end
+
                 # If simplex is not in the z-domain (only possible if z_range ∈ [z_floor, z_surface]), ignore it.
                 if ctx.z_range != z_all
                     is_bath = is_bathy(m3n_simp_points, ctx.water_height)
@@ -338,9 +348,6 @@ module Rasterization
                         continue
                     end
                 end
-
-                coord_x_min = minimum(m3n_simp_points[X, :])
-                coord_x_max = maximum(m3n_simp_points[X, :])
 
                 idx_x_min = floor(Int,(coord_x_min - ctx.domain[X][MIN]) / ctx.sampling_rate[X]) + 1
                 idx_x_max =  ceil(Int,(coord_x_max - ctx.domain[X][MIN]) / ctx.sampling_rate[X])
