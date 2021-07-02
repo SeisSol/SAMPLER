@@ -5,7 +5,8 @@
 =#
 
 module Args
-    using ArgParse
+    using Base: Float64
+using ArgParse
     using Main.Util
 
     export read_args
@@ -16,7 +17,7 @@ module Args
 
     VarMapping      = Dict{String, String}
     SamplingTuple   = NTuple{3, Float64}
-    DomainSize      = NTuple{2, NTuple{2, Float64}} # ((xmin,xmax), (ymin,ymax))
+    DomainSize      = NTuple{2, Tuple{Float64, Float64}} # ((xmin,xmax), (ymin,ymax))
 
     struct Timespan{T <: Number}
         t_start :: T
