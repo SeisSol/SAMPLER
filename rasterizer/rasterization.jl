@@ -609,30 +609,21 @@ module Rasterization
                             end
 
                             if ctx.tanioka
-                                tanioka_offset = 0.
-
-                                # ∂b/∂x
-                                v_λ = bary_coords_2d(v_p .+ (1., 0., 0.), m43_simp_points)
-                                b = sum(m43_simp_points[Z,1:3] .* v_λ)
-                                ∂b∂x = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
-
-                                # ∂b/∂y
-                                v_λ = bary_coords_2d(v_p .+ (0., 1., 0.), m43_simp_points)
-                                b = sum(m43_simp_points[Z,1:3] .* v_λ)
-                                ∂b∂y = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
-
-                                for t ∈ 1:n_times
-                                    # TODO: Do not hardcode variable indices for U,V,W!!
-                                    tanioka_offset = (∂b∂x * itbuf.prefetched_vars["U"][simp_id, t] 
-                                                    +  ∂b∂y * itbuf.prefetched_vars["V"][simp_id, t])
-                                    itbuf.out_grids_dyn[ctx.dyn_var_mapping["W"]][idx_g_x, idx_g_y, t] = itbuf.prefetched_vars["W"][simp_id, t] - tanioka_offset
-                                end
+                                (∂b∂x, ∂b∂y) = get_tanioka_db(ctx, itbuf, v_p, m43_simp_points, idx_g_x, idx_g_y)
                             else
-                                for in_name ∈ keys(ctx.dyn_var_mapping)
-                                    out_name = ctx.dyn_var_mapping[in_name]
-                                    for t ∈ 1:n_times
-                                        itbuf.out_grids_dyn[out_name][idx_g_x, idx_g_y, t] = itbuf.prefetched_vars[in_name][simp_id, t]
+                                (∂b∂x, ∂b∂y) = (0., 0.)
+                            end
+
+                            for in_name ∈ keys(ctx.dyn_var_mapping)
+                                out_name = ctx.dyn_var_mapping[in_name]
+                                for t ∈ 1:n_times
+                                    if in_name == "W" && ctx.tanioka
+                                        tanioka_offset = (∂b∂x * itbuf.prefetched_vars["U"][simp_id, t] +  ∂b∂y * itbuf.prefetched_vars["V"][simp_id, t])
+                                    else
+                                        tanioka_offset = 0.
                                     end
+                                    
+                                    itbuf.out_grids_dyn[out_name][idx_g_x, idx_g_y, t] = itbuf.prefetched_vars[in_name][simp_id, t] - tanioka_offset
                                 end
                             end
 
@@ -778,6 +769,20 @@ module Rasterization
     """
     @inline function is_bathy(triangle_points, water_height = 0.)
         return any(abs.(triangle_points[Z,:] .- water_height) .> 1e-8)
+    end
+
+    @inline function get_tanioka_db(ctx, itbuf, v_p, m43_simp_points, idx_g_x, idx_g_y)
+        # ∂b/∂x
+        v_λ = bary_coords_2d(v_p .+ (1., 0., 0.), m43_simp_points)
+        b = sum(m43_simp_points[Z,1:3] .* v_λ)
+        ∂b∂x = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
+
+        # ∂b/∂y
+        v_λ = bary_coords_2d(v_p .+ (0., 1., 0.), m43_simp_points)
+        b = sum(m43_simp_points[Z,1:3] .* v_λ)
+        ∂b∂y = b - itbuf.out_grids_stat[ctx.stat_var_mapping["b"]][idx_g_x, idx_g_y]
+
+        return (∂b∂x, ∂b∂y)
     end
 
     """
