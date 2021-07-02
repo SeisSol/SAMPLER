@@ -5,8 +5,7 @@
 =#
 
 module Args
-    using Base: Float64
-using ArgParse
+    using ArgParse
     using Main.Util
 
     export read_args
@@ -17,7 +16,7 @@ using ArgParse
 
     VarMapping      = Dict{String, String}
     SamplingTuple   = NTuple{3, Float64}
-    DomainSize      = NTuple{2, Tuple{Float64, Float64}} # ((xmin,xmax), (ymin,ymax))
+    DomainSize      = NTuple{2, NTuple{2, Float64}} # ((xmin,xmax), (ymin,ymax))
 
     struct Timespan{T <: Number}
         t_start :: T
@@ -115,7 +114,7 @@ using ArgParse
     function ArgParse.parse_item(::Type{DomainSize}, x::AbstractString)
         floats = split(x, ',')
 
-        if length(floats != 4)
+        if length(floats) != 4
             throw(ArgumentError(""""$x" is not in the format "xmin,xmax,ymin,ymax"!"""))
         end
 
