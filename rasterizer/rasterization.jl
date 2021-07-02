@@ -589,7 +589,7 @@ using Base.Threads
                          floor(Int32, (m32_tet_aabb[  Z,MAX] - ctx.domain[  Z][MIN]) / ctx.sampling_rate[  Z]) + 1)
 
             idx_g_min = Tuple(max(1               , idx_g_min[dim]) for dim ∈ X:Z)
-            idx_g_max = Tuple(min(ctx.samples[dim], idx_g_min[dim]) for dim ∈ X:Z)
+            idx_g_max = Tuple(min(ctx.samples[dim], idx_g_max[dim]) for dim ∈ X:Z)
 
             n_current_cells = idx_g_max .- idx_g_min .+ 1
 
