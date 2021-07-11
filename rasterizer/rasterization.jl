@@ -389,11 +389,7 @@ using Base.Threads
             l_bin_counts[bin_id] += 1
         end
 
-        for bin_id ∈ 1:length(l_bin_counts) - 1
-            println(l_bin_counts[bin_id], " ", simplex_name(ctx), " in bin ", bin_id)
-        end
-
-        max_chars_per_bin = ceil(Int, log10(maximum(l_bin_counts)))
+        max_chars_per_bin = floor(Int, max(0, log10(maximum(l_bin_counts)))) + 1
         chars_per_line = 120
         bins_per_line = max(1, (chars_per_line ÷ (max_chars_per_bin + 1)) ÷ 8 * 8)
 
@@ -402,7 +398,7 @@ using Base.Threads
             if bin_id != 1 && (bin_id - 1) % bins_per_line == 0
                 println()
             end
-            bin_chars = floor(Int, max(1, log10(l_bin_counts[bin_id])))
+            bin_chars = floor(Int, max(0, log10(l_bin_counts[bin_id]))) + 1
             print(' '^(max_chars_per_bin-bin_chars+1), l_bin_counts[bin_id])
         end
         println()
