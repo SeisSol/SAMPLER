@@ -18,6 +18,7 @@ using Base.Threads
     using Main.XDMF
     using Main.Args
     using Infiltrator
+    using Base
 
     export rasterize, ZRange
 
@@ -420,6 +421,8 @@ using Base.Threads
         # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
         # timesteps that can be stored in l_iter_output_grids.
         for iteration ∈ 1:ctx.n_iterations
+            GC.gc();GC.gc();GC.gc();GC.gc();GC.gc()
+
             t_start = ctx.t_begin + (iteration - 1) * ctx.n_timesteps_per_iteration
             n_times = min(ctx.n_timesteps - (iteration - 1) * ctx.n_timesteps_per_iteration, ctx.n_timesteps_per_iteration)
             t_stop = t_start + n_times - 1
@@ -431,11 +434,13 @@ using Base.Threads
             # and D R A S T I C A L L Y improves runtime.
             #============================================#
 
-            var_bufs :: Dict{AbstractString, Array{AbstractArray, 1}} = Main.XDMF.data_of(xdmf, t_start, t_stop, ctx.in_vars_dyn)
+            var_bufs :: Union{Dict{AbstractString, Array{AbstractArray, 1}}, Nothing} = Main.XDMF.data_of(xdmf, t_start, t_stop, ctx.in_vars_dyn)
 
             for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
                 copyto!(itbuf.prefetched_vars[var_name], 1 + (t-1) * ctx.n_simplices, var_bufs[var_name][t], 1, ctx.n_simplices)
             end
+
+            var_bufs = nothing
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
             for grid ∈ values(itbuf.out_grids_dyn)
