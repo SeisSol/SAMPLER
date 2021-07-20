@@ -99,7 +99,7 @@ module XDMF
         file_range = binary_item[:Dimensions]
         file_range = split(file_range, ' ')
         file_range = parse.(UInt, file_range)
-        file_range = tuple(file_range[2], length(xdmf.timesteps)) # Assuming all timesteps of a variable are in the same file.
+        file_range = tuple(file_range[2], UInt(length(xdmf.timesteps))) # Assuming all timesteps of a variable are in the same file.
 
         filename = binary_item[""]
 
