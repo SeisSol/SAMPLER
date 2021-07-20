@@ -133,7 +133,8 @@ module XDMF
             xdmf.mmaps[var_name] = whole_file
         end
 
-        return @view xdmf.mmaps[var_name][hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
+        mmap =  xdmf.mmaps[var_name]
+        return @view mmap[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
     end
 
     function mmap_data_item(data_item::XMLDict.XMLDictElement, base_path::AbstractString)
