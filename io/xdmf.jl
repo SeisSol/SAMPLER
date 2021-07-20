@@ -9,6 +9,7 @@ module XDMF
         xml         :: XMLDict.XMLDictElement
         base_path   :: AbstractString
         timesteps   :: Array{XMLDict.XMLDictElement,1}
+        mmaps       :: Dict
     end
 
     function timesteps_of(xdmf::XDMFFile) :: Array{Float64, 1}
@@ -40,7 +41,7 @@ module XDMF
             timestep_attrs = xdmf.timesteps[t + timestep_start - 1]["Attribute"]
             for i ∈ 1:length(timestep_attrs)
                 if timestep_attrs[i][:Name] == var_name
-                    ret_dict[var_name][t] = mmap_hyperslab(timestep_attrs[i]["DataItem"], xdmf.base_path)
+                    ret_dict[var_name][t] = mmap_hyperslab(xdmf, timestep_attrs[i]["DataItem"], var_name)
                     break
                 end
             end
@@ -67,10 +68,10 @@ module XDMF
 
         xdmf_base_path = splitdir(file_path)[1]
 
-        return XDMFFile(xml_file, xdmf_base_path, timesteps)
+        return XDMFFile(xml_file, xdmf_base_path, timesteps, Dict())
     end
         
-    function mmap_hyperslab(data_item::XMLDict.XMLDictElement, base_path::AbstractString)
+    function mmap_hyperslab(xdmf::XDMFFile, data_item::XMLDict.XMLDictElement, var_name::AbstractString)
         #=
         <DataItem ItemType="HyperSlab" Dimensions="4561037">
             <DataItem NumberType="UInt" Precision="4" Format="XML" Dimensions="3 2">0 0 1 1 1 4561037</DataItem>
@@ -102,33 +103,37 @@ module XDMF
 
         filename = binary_item[""]
 
-        if binary_item[:Format] == "HDF"
-            path_parts = split(filename, ':', limit=2)
-            if isempty(path_parts[1]) || isempty(path_parts[2])
-                error("HDF5 group path is invalid.")
-            end
+        if var_name ∉ keys(xdmf.mmaps)
+            if binary_item[:Format] == "HDF"
+                path_parts = split(filename, ':', limit=2)
+                if isempty(path_parts[1]) || isempty(path_parts[2])
+                    error("HDF5 group path is invalid.")
+                end
 
-            filename = joinpath(base_path, path_parts[1])
-            hdf_dataset_path = String(path_parts[2])
+                filename = joinpath(xdmf.base_path, path_parts[1])
+                hdf_dataset_path = String(path_parts[2])
 
-            hdf_file = h5open(filename, "r")
-            hdf_dataset = hdf_file[hdf_dataset_path]
-            if !ismmappable(hdf_dataset)
+                hdf_file = h5open(filename, "r")
+                hdf_dataset = hdf_file[hdf_dataset_path]
+                if !ismmappable(hdf_dataset)
+                    close(hdf_file)
+                    error("Compressed/chunked HDF5 files are not supported. Use 'scripts/hdf5_preprocess.sh' to convert the inputs into a usable format.")
+                end
+                
+                hdf_mmap = readmmap(hdf_dataset)
                 close(hdf_file)
-                error("Compressed/chunked HDF5 files are not supported. Use 'scripts/hdf5_preprocess.sh' to convert the inputs into a usable format.")
-            end
-            
-            hdf_mmap = readmmap(hdf_dataset)
-            close(hdf_file)
-            num_timesteps = length(hdf_mmap) ÷ file_range[1]
+                num_timesteps = length(hdf_mmap) ÷ file_range[1]
 
-            hdf_mmap = reshape(hdf_mmap, (file_range[1], num_timesteps))
-            return @view hdf_mmap[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
-        else
-            filename = joinpath(base_path, filename)
-            whole_file = Mmap.mmap(filename, Array{number_type, 2}, file_range)
-            return @view whole_file[hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
+                whole_file = reshape(hdf_mmap, (file_range[1], num_timesteps))
+            else
+                filename = joinpath(xdmf.base_path, filename)
+                whole_file = Mmap.mmap(filename, Array{number_type, 2}, file_range)
+            end
+
+            xdmf.mmaps[var_name] = whole_file
         end
+
+        return @view xdmf.mmaps[var_name][hyperslab_range[1,2]:hyperslab_range[1,2]+hyperslab_range[2,2]-1,hyperslab_range[1,1]]
     end
 
     function mmap_data_item(data_item::XMLDict.XMLDictElement, base_path::AbstractString)
