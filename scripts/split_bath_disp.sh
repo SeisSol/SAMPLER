@@ -8,7 +8,7 @@
 # A file "file.nc" will be split into "file-disp.nc" and "file-bathy.nc" in the same directory.
 # The file itself remains untouched.
 
-module load nco/4.6.2
+module load nco
 
 FILES=$@
 for fn in $FILES

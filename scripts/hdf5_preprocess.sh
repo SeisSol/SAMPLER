@@ -9,7 +9,7 @@
 # The in_xdmf_stem parameter is the common part of the hdf5 files' filenames. (e.g. "out" for "out_cell.h5" and "out_vertex.h5")
 # When specifying an out_dir, the corresponding XDMF file will also be copied to there.
 
-module load nco/4.6.2
+module load nco
 
 if [ -z "$2" ]; then
     echo "Preprocessing and copying to same directory"
