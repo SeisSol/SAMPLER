@@ -5,8 +5,8 @@
 =#
 
 module NC
-using NetCDF
-    using Main.Args
+    using NetCDF
+    using ..Args
 
     export get_netcdf, create_netcdf
 

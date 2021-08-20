@@ -1,6 +1,4 @@
 module Util
-    using NetCDF
-
     export human_readable_size, parse_size
 
     const ORDERS_OF_MAGNITUDE = "KMGTPEZY"

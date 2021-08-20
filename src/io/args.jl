@@ -6,12 +6,9 @@
 
 module Args
     using ArgParse
-    using Main.Util
+    using ..Util
 
-    export read_args
-    export Timespan
-    export VarMapping
-    export SamplingTuple
+    export read_args, Timespan, VarMapping, SamplingTuple, DomainSize
 
 
     VarMapping      = Dict{String, String}
@@ -222,7 +219,7 @@ module Args
     end
 
     function validate_args!(args::Dict)
-        args["memory-limit"] = Main.Util.parse_size(args["memory-limit"])
+        args["memory-limit"] = parse_size(args["memory-limit"])
 
         if !isnothing(args["output-time"]) && !isnothing(args["output-steps"])
            throw(ArgumentError("Setting both '--output-time' and '--output-steps' simultaneously is not allowed!"))

@@ -1,13 +1,10 @@
-using Plots: isnothing, calc_num_subplots
-include("../io/util.jl")
-include("../io/args.jl")
-include("../io/netcdf.jl")
-include("../io/xdmf.jl")
-include("../rasterizer/rasterization.jl")
+include("../src/io/util.jl")
+include("../src/io/args.jl")
+include("../src/io/netcdf.jl")
+include("../src/rasterizer/rasterization.jl")
 
 using Test
 using Base.Threads
-using Plots
 
 ATOL=0.05
 
@@ -28,11 +25,12 @@ function make_context(simplices, points;
                       t_end=0,
                       times=[0.],
                       out_filename="temp.nc",
+                      custom_domain=((-Inf, Inf), (-Inf, Inf)),
                       max_threads=typemax(Int))
                       
     Rasterization.RasterizationContext(simplices, points, sampling_rate, mem_limit, 
                                        dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
-                                       water_height, t_begin, t_end, times, out_filename, max_threads=max_threads)
+                                       water_height, t_begin, t_end, times, out_filename, custom_domain, max_threads=max_threads)
 end
 
 @testset "Rasterization" begin
@@ -209,6 +207,7 @@ end
             @test bin_ids[i] == l_bin_ids[i]
         end
     end
+
     @testset "iterate" begin end
     Rasterization.iterate
     @testset "iterate_simps!" begin end

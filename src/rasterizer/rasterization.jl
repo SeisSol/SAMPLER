@@ -7,18 +7,16 @@ rasterization.jl:
 
 module Rasterization
     using Dates: length
-using Base.Threads
+    using Base.Threads
     using LinearAlgebra
     using Dates
     using Printf
     using NetCDF
-    using Profile
-    using Main.Util
-    using Main.NC
-    using Main.XDMF
-    using Main.Args
-    using Infiltrator
     using Base
+    using SeisSolXDMF
+    using ..Util
+    using ..NC
+    using ..Args
 
     export rasterize, ZRange
 
@@ -50,8 +48,8 @@ using Base.Threads
         domain                      :: NTuple{3, NTuple{2, Float64}} # (x, y, z) with (min, max) respectively
         samples                     :: NTuple{3, UInt}
         sampling_rate               :: NTuple{3, Float64}
-        dyn_var_mapping             :: Main.Args.VarMapping
-        stat_var_mapping            :: Main.Args.VarMapping
+        dyn_var_mapping             :: VarMapping
+        stat_var_mapping            :: VarMapping
         in_vars_dyn                 :: Array{String, 1}
         out_vars_stat               :: Array{String, 1}
         out_vars_dyn                :: Array{String, 1}
@@ -215,8 +213,8 @@ using Base.Threads
     """
     function rasterize(
         xdmf                :: XDMFFile,
-        dyn_var_mapping     :: Main.Args.VarMapping,
-        stat_var_mapping    :: Main.Args.VarMapping,
+        dyn_var_mapping     :: VarMapping,
+        stat_var_mapping    :: VarMapping,
         times               :: AbstractArray{Float64, 1},
         sampling_rate       :: NTuple{3, Float64},
         out_filename        :: AbstractString,
@@ -224,11 +222,11 @@ using Base.Threads
         z_range             :: ZRange  = z_all,
         t_begin             :: Integer = 1,
         t_end               :: Integer = length(times),
-        create_nc_dyn_vars  :: Array{Main.Args.VarMapping, 1} = Array{Main.Args.VarMapping, 1}(),
-        create_nc_stat_vars :: Array{Main.Args.VarMapping, 1} = Array{Main.Args.VarMapping, 1}(),
+        create_nc_dyn_vars  :: Array{VarMapping, 1} = Array{VarMapping, 1}(),
+        create_nc_stat_vars :: Array{VarMapping, 1} = Array{VarMapping, 1}(),
         water_height        :: Float64 = 0.,
         tanioka             :: Bool    = false,
-        domain              :: Main.Args.DomainSize = ((-Inf, Inf),(-Inf, Inf)))
+        domain              :: DomainSize = ((-Inf, Inf),(-Inf, Inf)))
 
         simplices, points = grid_of(xdmf)
 
@@ -261,12 +259,12 @@ using Base.Threads
         #============================================#
 
         if !isempty(create_nc_dyn_vars) || !isempty(create_nc_stat_vars)
-            Main.NC.create_netcdf(ctx.out_filename, [ctx.domain[Y][MIN] + i * ctx.sampling_rate[Y] for i ∈ 1:ctx.samples[Y]],
+            create_netcdf(ctx.out_filename, [ctx.domain[Y][MIN] + i * ctx.sampling_rate[Y] for i ∈ 1:ctx.samples[Y]],
                                   [ctx.domain[X][MIN] + i * ctx.sampling_rate[X] for i ∈ 1:ctx.samples[X]],
                                   ctx.times[ctx.t_begin:ctx.t_end],
                                   create_nc_stat_vars, create_nc_dyn_vars)
         else
-            Main.NC.get_netcdf(ctx.out_filename)
+            get_netcdf(ctx.out_filename)
         end
 
         #============================================#
@@ -287,7 +285,7 @@ using Base.Threads
         #============================================#
 
         println("Processing timesteps ", ctx.t_begin-1, "-", ctx.t_end-1, " of 0-", length(times)-1, ".")
-        println("RAM limit: ", Main.Util.human_readable_size(mem_limit), "; Can work on ",
+        println("RAM limit: ", human_readable_size(mem_limit), "; Can work on ",
                 ctx.n_timesteps_per_iteration, " timesteps at once (therefore needing ",
                 ctx.n_iterations , " iterations).")
 
@@ -434,13 +432,10 @@ using Base.Threads
             # and D R A S T I C A L L Y improves runtime.
             #============================================#
 
-            var_bufs :: Union{Dict{AbstractString, Array{AbstractArray, 1}}, Nothing} = Main.XDMF.data_of(xdmf, t_start, t_stop, ctx.in_vars_dyn)
-
             for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
-                copyto!(itbuf.prefetched_vars[var_name], 1 + (t-1) * ctx.n_simplices, var_bufs[var_name][t], 1, ctx.n_simplices)
+                buf = data_of(xdmf, t_start + t - 1, var_name)
+                copyto!(itbuf.prefetched_vars[var_name], 1 + (t-1) * ctx.n_simplices, buf, 1, ctx.n_simplices)
             end
-
-            var_bufs = nothing
 
             # Reset the output values to 0. Only do so for the timesteps actually processed in this iteration.
             for grid ∈ values(itbuf.out_grids_dyn)
