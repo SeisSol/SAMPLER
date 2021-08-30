@@ -201,10 +201,10 @@ end
 
     @testset "bin" begin
         ctx = make_context(simplices2D, points, sampling_rate=(1., 1., 1.), water_height=water_height, z_range=Rasterization.z_floor, max_threads=3)
-        l_bin_ids, l_bin_counts = Rasterization.bin(ctx)
+        bins = Rasterization.bin(ctx)
 
         for i ∈ 1:size(simplices2D,2)
-            @test bin_ids[i] == l_bin_ids[i]
+            @test bin_ids[i] == bins.bin_ids[i]
         end
     end
 

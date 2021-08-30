@@ -8,38 +8,31 @@ module Rasterization
     using Base
     using SeisSolXDMF
     using ..Util
-    using ..NC
     using ..Args
 
-    export rasterize, ZRange
+    export rasterize, bin, ZRange, RasterizationContext, BinningContext
 
     @enum ZRange z_all=-1 z_floor=0 z_surface=1
 
     const EDGE_TOL = .0      # Tolerance for whether to consider points that are close to a simplex edge/face to be on that edge/face
     const Z_RANGE_TOL = .001 # Tolerance for points close to the z_range-limit. Points over the limit by less than Z_RANGE_TOL are not discarded
 
-    # Aliases for common array indices
-    const X = 1
-    const Y = 2
-    const Z = 3
-    const MIN = 1
-    const MAX = 2
-
     struct HesseNormalForm
-        n0  :: NTuple{3, Float64}
-        d   :: Float64
+        n0                          :: NTuple{3, Float64}
+        d                           :: Float64
     end
 
     """
     Contains all static information necessary for rasterization, as well as some computed values for convenience.
     """
     struct RasterizationContext
+        xdmf                        :: XDMFFile
         simplices                   :: AbstractArray{Integer, 2}
         points                      :: AbstractArray{AbstractFloat, 2}
 
         z_range                     :: ZRange
         domain                      :: NTuple{3, NTuple{2, Float64}} # (x, y, z) with (min, max) respectively
-        samples                     :: NTuple{3, UInt}
+        samples                     :: NTuple{3, Int}
         sampling_rate               :: NTuple{3, Float64}
         dyn_var_mapping             :: VarMapping
         stat_var_mapping            :: VarMapping
@@ -68,35 +61,32 @@ module Rasterization
         times                       :: AbstractArray{Float64, 1}
 
         out_filename                :: AbstractString
+        mem_limit                   :: Int
+    end
+
+    struct BinningContext
+        bin_ids                     :: Array{Integer, 1}
+        bin_counts                  :: Array{Integer, 1}
     end
 
     """
     Contains buffers that are rewritten during rasterization, as well as binning info.
     """
     struct IterationBuffers
-        bin_ids
-        bin_counts
         out_grids_dyn               :: Dict{String, Array{Float64, 3}}
         out_grids_stat              :: Dict{String, Array{Float64, 2}}
         out_sample_counts           :: Array{UInt16, 2}
         prefetched_vars             :: Dict{String, Array{Float64, 2}}
     end
 
-    """
-    Returns the name of the simplex type currently being rasterized (triangle or tetrahedron), either in plural (default) or singular form.
-    """
-    @inline function simplex_name(ctx, plural=true)
-        return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
-    end
+    function RasterizationContext(xdmf, simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
+        tanioka, water_height, t_begin, t_end, times, out_filename, custom_domain; max_threads=typemax(Int))
 
-    function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
-                                  tanioka, water_height, t_begin, t_end, times, out_filename, custom_domain; max_threads=typemax(Int))
-
-        custom_domain                   = (custom_domain..., (-Inf, Inf)) # Add z-range
+        custom_domain                   = (custom_domain..., (-Inf, Inf)) # TODO: Add z-range
         domain                          = Tuple( (max(minimum(points[i, :]), custom_domain[i][MIN]), 
                                                   min(maximum(points[i, :]), custom_domain[i][MAX]))                for i in X:Z)
 
-        samples                         = Tuple( ceil(UInt, (domain[i][MAX] - domain[i][MIN]) / sampling_rate[i])   for i in X:Z)
+        samples                         = Tuple( ceil(Int, (domain[i][MAX] - domain[i][MIN]) / sampling_rate[i])    for i in X:Z)
 
         #============================================#
         # Calculate problem size & hardware limitations
@@ -137,42 +127,43 @@ module Rasterization
         n_out_vars_stat                 = length(out_vars_stat)
 
         n_timesteps                     = t_end - t_begin + 1
+
         n_timesteps_per_iteration       = ((mem_limit - b_mem_points - b_mem_simps - b_mem_cnt - b_mem_misc - n_out_vars_stat * b_mem_per_out_var_and_timestep)
-                                        ÷  (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
+                    ÷  (n_in_vars * b_mem_per_in_var_and_timestep + n_out_vars_dyn * b_mem_per_out_var_and_timestep))
         n_timesteps_per_iteration       = max(1, n_timesteps_per_iteration) # Process at least 1 timestep
 
         n_iterations                    = ceil(Int, n_timesteps / n_timesteps_per_iteration)
 
-        return RasterizationContext(simplices, points, 
-                                    z_range, domain, samples, sampling_rate,
-                                    dyn_var_mapping, stat_var_mapping, 
-                                    in_vars_dyn, out_vars_stat, out_vars_dyn,
-                                    n_threads, n_simplex_points, 
-                                    n_dims, n_simplices, 
-                                    n_in_vars, n_out_vars_dyn, 
-                                    n_out_vars_stat, n_timesteps,
-                                    n_timesteps_per_iteration, n_iterations, 
-                                    simplices_per_thread,
-                                    tanioka, water_height, t_begin, t_end, times,
-                                    out_filename)
+        return RasterizationContext(xdmf, simplices, points, 
+                z_range, domain, samples, sampling_rate,
+                dyn_var_mapping, stat_var_mapping, 
+                in_vars_dyn, out_vars_stat, out_vars_dyn,
+                n_threads, n_simplex_points, 
+                n_dims, n_simplices, 
+                n_in_vars, n_out_vars_dyn, 
+                n_out_vars_stat, n_timesteps,
+                n_timesteps_per_iteration, n_iterations, 
+                simplices_per_thread,
+                tanioka, water_height, t_begin, t_end, times,
+                out_filename, mem_limit)
     end
 
-    function IterationBuffers(bin_ids, bin_counts, ctx :: RasterizationContext)
+    function IterationBuffers(ctx :: RasterizationContext)
         # These are the grids that will be written to the NetCDF output later on.
         out_grids_dyn = Dict{String, Array{Float64, 3}}()
         for var_name ∈ ctx.out_vars_dyn
-            out_grids_dyn[var_name] = Array{Float64, 3}(undef, (ctx.samples[X:Y]..., ctx.n_timesteps_per_iteration))
+            out_grids_dyn[var_name] = zeros(ctx.samples[X:Y]..., ctx.n_timesteps_per_iteration)
         end
 
         out_grids_stat = Dict{String, Array{Float64, 2}}()
         for var_name ∈ ctx.out_vars_stat
-            out_grids_stat[var_name] = Array{Float64, 2}(undef, ctx.samples[X:Y])
+            out_grids_stat[var_name] = zeros(ctx.samples[X:Y]...)
         end
 
         # This matrix counts the total number of samples in each output grid cell
         # (read: the total number of sampled points in z-direction for each xy-index of the output grids)
         # This stays constant across all vars and timesteps because the grid geometry is constant.
-        out_sample_counts = Array{UInt16, 2}(undef, ctx.samples[X:Y])
+        out_sample_counts = zeros(UInt16, ctx.samples[X:Y]...)
 
         # Variable prefetch buffers, get rewritten every iteration
         prefetched_vars = Dict{String, Array{Float64, 2}}()
@@ -180,51 +171,13 @@ module Rasterization
             prefetched_vars[var_name] = Array{Float64, 2}(undef, (ctx.n_simplices, ctx.n_timesteps_per_iteration))
         end
 
-        return IterationBuffers(bin_ids, bin_counts, out_grids_dyn, out_grids_stat, out_sample_counts, prefetched_vars)
+        return IterationBuffers(out_grids_dyn, out_grids_stat, out_sample_counts, prefetched_vars)
     end
 
     """
-        Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
-
-    # Arguments
-    - `xdmf`:                   The XDMF file handle of the file to be rasterized
-    - `dyn_var_mapping`:        Mapping of input to output names for dynamic variables in the current rasterization step.
-    - `stat_var_mapping`:       Analogous, but for static variables.
-    - `times`:                  An array of timestamps corresponding to the timesteps
-    - `sampling_rate`:          A tuple (Δx, Δy, Δz) defining the regular grid cell size.
-    - `out_filename`:           The path/name of the output NetCDF file
-    - `mem_limit`:              The soft memory (in bytes) the software is allowed to utilize (soft limit!)
-    - `z_range`:                A filter for discarding simplices in a certain mesh region. `z_floor` only keeps bathymetry, `z_surface` only keeps the sea surface, 
-                                `z_all` keeps all simplices.
-    - `t_begin`:                The first timestep to be rasterized
-    - `t_end`:                  The last timestep to be rasterized
-    - `create_nc_dyn_vars`:     If not empty: create output file containing all value sides of the var mapping as variables. Existing file is overwritten.
-                                Else: use existing file. If given, should contain all variable mappings of all rasterization passes.
-    - `create_nc_stat_vars`:    Analogous to above.
-    - `water_height`:           The offset to translate the water level to be at `z=0`.
-    - `tanioka`:                Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements to be present in the input XDMF file.
+    Rasterize variables stored in an unstructured grid into a regular grid. Write the results to a NetCDF file.
     """
-    function rasterize(
-        xdmf                :: XDMFFile,
-        dyn_var_mapping     :: VarMapping,
-        stat_var_mapping    :: VarMapping,
-        times               :: AbstractArray{Float64, 1},
-        sampling_rate       :: NTuple{3, Float64},
-        out_filename        :: AbstractString,
-        mem_limit           :: Int;
-        z_range             :: ZRange  = z_all,
-        t_begin             :: Integer = 1,
-        t_end               :: Integer = length(times),
-        create_nc_dyn_vars  :: Array{VarMapping, 1} = Array{VarMapping, 1}(),
-        create_nc_stat_vars :: Array{VarMapping, 1} = Array{VarMapping, 1}(),
-        water_height        :: Float64 = 0.,
-        tanioka             :: Bool    = false,
-        domain              :: DomainSize = ((-Inf, Inf),(-Inf, Inf)))
-
-        simplices, points = grid_of(xdmf)
-
-        ctx = RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
-                                   water_height, t_begin, t_end, times, out_filename, domain)
+    function rasterize(ctx, bins)
 
         #============================================#
         # Print rasterization settings
@@ -247,50 +200,26 @@ module Rasterization
             println("Sampling into $(ctx.samples[X]) × $(ctx.samples[Y]) cells.")
         end
 
-        #============================================#
-        # Set up NetCDF output file
-        #============================================#
-
-        if !isempty(create_nc_dyn_vars) || !isempty(create_nc_stat_vars)
-            create_netcdf(ctx.out_filename, [ctx.domain[Y][MIN] + i * ctx.sampling_rate[Y] for i ∈ 1:ctx.samples[Y]],
-                                  [ctx.domain[X][MIN] + i * ctx.sampling_rate[X] for i ∈ 1:ctx.samples[X]],
-                                  ctx.times[ctx.t_begin:ctx.t_end],
-                                  create_nc_stat_vars, create_nc_dyn_vars)
-        else
-            get_netcdf(ctx.out_filename)
-        end
-
-        #============================================#
-        # Put simplices into bins to avoid thread
-        # synchronization & lock contention later on.
-        #============================================#
-
-        bin_ids, bin_counts = bin(ctx)
+        println("Processing timesteps ", ctx.t_begin-1, "-", ctx.t_end-1, " of 0-", length(ctx.times)-1, ".")
+        println("RAM limit: ", human_readable_size(ctx.mem_limit), "; Can work on ",
+                ctx.n_timesteps_per_iteration, " timesteps at once (therefore needing ",
+                ctx.n_iterations , " iterations).")
 
         #============================================#
         # Setup output grids in memory
         #============================================#
 
-        itbuf = IterationBuffers(bin_ids, bin_counts, ctx)
-
-        #============================================#
-        # Sample simplices and write to output
-        #============================================#
-
-        println("Processing timesteps ", ctx.t_begin-1, "-", ctx.t_end-1, " of 0-", length(times)-1, ".")
-        println("RAM limit: ", human_readable_size(mem_limit), "; Can work on ",
-                ctx.n_timesteps_per_iteration, " timesteps at once (therefore needing ",
-                ctx.n_iterations , " iterations).")
+        itbuf = IterationBuffers(ctx)
 
         #============================================#
         # Iterate over and rasterize timesteps
         #============================================#
 
-        iterate(ctx, itbuf, xdmf)
+        iterate(ctx, itbuf, bins)
 
     end # function rasterize
 
-    function bin(ctx)
+    function bin(ctx :: RasterizationContext) :: BinningContext
         println("Binning $(ctx.n_simplices) $(simplex_name(ctx)) into $(ctx.n_threads)+$(ctx.n_threads - 1)+1 buckets...")
 
         n_excluded_domain = 0
@@ -404,15 +333,15 @@ module Rasterization
         end
 
         println("Done.")
-        return (l_bin_ids, l_bin_counts)
+        return BinningContext(l_bin_ids, l_bin_counts)
     end
 
-    function iterate(ctx, itbuf, xdmf)
+    function iterate(ctx, itbuf, bins)
         # In each iteration, process ALL simplices for ALL variables for as many timesteps as possible*
         # *possible means that the maximum memory footprint set above cannot be exceeded. This limits the number of
         # timesteps that can be stored in l_iter_output_grids.
         for iteration ∈ 1:ctx.n_iterations
-            GC.gc();GC.gc();GC.gc();GC.gc();GC.gc()
+            GC.gc()
 
             t_start = ctx.t_begin + (iteration - 1) * ctx.n_timesteps_per_iteration
             n_times = min(ctx.n_timesteps - (iteration - 1) * ctx.n_timesteps_per_iteration, ctx.n_timesteps_per_iteration)
@@ -426,7 +355,7 @@ module Rasterization
             #============================================#
 
             for var_name ∈ ctx.in_vars_dyn, t ∈ 1:n_times
-                buf = data_of(xdmf, t_start + t - 1, var_name)
+                buf = data_of(ctx.xdmf, t_start + t - 1, var_name)
                 copyto!(itbuf.prefetched_vars[var_name], 1 + (t-1) * ctx.n_simplices, buf, 1, ctx.n_simplices)
             end
 
@@ -460,18 +389,18 @@ module Rasterization
 
             # P-partitioning
             Threads.@threads for thread_id ∈ 1:ctx.n_threads
-                iterate_simps!(thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
+                iterate_simps!(thread_id, ctx, itbuf, bins, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
             end # for thread_id
 
             println("Processing $(simplex_name(ctx)) on bucket borders...")
 
             # B-partitioning
             Threads.@threads for thread_id ∈ 1:ctx.n_threads-1
-                iterate_simps!(ctx.n_threads + thread_id, ctx, itbuf, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
+                iterate_simps!(ctx.n_threads + thread_id, ctx, itbuf, bins, t_start, t_stop, print_progress = (thread_id == ctx.n_threads ÷ 2))
             end # for thread_id
 
             # R-partitioning
-            iterate_simps!(2 * ctx.n_threads, ctx, itbuf, t_start, t_stop, print_progress = true)
+            iterate_simps!(2 * ctx.n_threads, ctx, itbuf, bins, t_start, t_stop, print_progress = true)
 
             println("Done.")
 
@@ -501,7 +430,8 @@ module Rasterization
         end # for iteration
     end
 
-    function iterate_simps!(bin_id, ctx:: RasterizationContext, itbuf:: IterationBuffers, t_start, t_stop; print_progress=false)
+    function iterate_simps!(bin_id, ctx:: RasterizationContext, itbuf:: IterationBuffers, bins :: BinningContext, 
+                            t_start, t_stop; print_progress=false)
         n_times = t_stop - t_start + 1
 
         #============================================#
@@ -521,11 +451,11 @@ module Rasterization
         d_last_printed      = d_start
         print_interval      = Second(2)
         n_bin_rasterized    = 0
-        n_bin_total         = itbuf.bin_counts[bin_id]
+        n_bin_total         = bins.bin_counts[bin_id]
 
         for simp_id ∈ 1:ctx.n_simplices
             # Only process tetrahedra in thread's own bin
-            if itbuf.bin_ids[simp_id] != bin_id
+            if bins.bin_ids[simp_id] != bin_id
                 continue
             end
 
@@ -850,5 +780,12 @@ module Rasterization
         λ3 = 1. - λ1 - λ2
 
         return (λ1, λ2, λ3)
+    end
+
+    """
+    Returns the name of the simplex type currently being rasterized (triangle or tetrahedron), either in plural (default) or singular form.
+    """
+    @inline function simplex_name(ctx, plural=true)
+        return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
     end
 end # module Rasterization

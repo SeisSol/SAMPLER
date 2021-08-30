@@ -51,6 +51,12 @@ git-tree-sha1 = "bdc0937269321858ab2a4f288486cb258b9a0af7"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 version = "1.3.0"
 
+[[ClusterManagers]]
+deps = ["Distributed", "Logging", "Pkg", "Sockets"]
+git-tree-sha1 = "3627417b13703bea9c29b3df2674ccd88465457c"
+uuid = "34f1f09b-3a8b-5176-ab39-66d58a4d544e"
+version = "0.4.1"
+
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
 git-tree-sha1 = "79b9563ef3f2cc5fc6d3046a5ee1a57c9de52495"

@@ -1,5 +1,12 @@
 module Util
-    export human_readable_size, parse_size
+    export human_readable_size, parse_size, X, Y, Z, MIN, MAX
+
+    # Aliases for common array indices
+    const X = 1
+    const Y = 2
+    const Z = 3
+    const MIN = 1
+    const MAX = 2
 
     const ORDERS_OF_MAGNITUDE = "KMGTPEZY"
 

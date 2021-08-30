@@ -120,6 +120,9 @@ module Args
     function read_args()
         parser_settings = ArgParseSettings()
         @add_arg_table! parser_settings begin
+            "--parallel", "-p"
+                help = """If SAMPLER is run on a compute cluster using SLURM, this flag will run SAMPLER in parallel mode, automatically sharing work across the allocated nodes."""
+                action = :store_true
             "--output-file", "-o"
                 help = "The filename (without extension) to use for the output."
                 default = ""
@@ -150,16 +153,16 @@ module Args
                                 \t Examples: 100; 50,70,80"""
                 arg_type = SamplingTuple
                 default = (100., 100., 100.)
-            "--water-height"
-                help = """Some bathymetry grids place the seafloor at z = 0. Set the water height such that it matches the sea surface's z-coordinate."""
-                arg_type = Float64
-                default = 0.
             "--memory-limit", "-m"
                 help = """The maximum amount of RAM the script should use. This is only a SOFT limit!\n
                                 \t [CAUTION] Currently, this limit is quite imprecise, do not specify more than ~half of the available RAM here!\n
                                 \t Examples: 8G; 2T; 512M\n
                                 \t IEC-Prefixes are used: 1K = 1KiB = 1024B, ..."""
                 default = "8G"
+            "--water-height"
+                help = """Some bathymetry grids place the seafloor at z = 0. Set the water height such that it matches the sea surface's z-coordinate."""
+                arg_type = Float64
+                default = 0.
             "--tanioka"
                 help = """Apply Tanioka's method for converting horizontal displacements to vertical ones during rasterization.\n
                                 \t If the variables U or V are not found in --seafloor-vars, they will be added automatically."""
