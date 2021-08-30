@@ -59,9 +59,9 @@ version = "0.4.1"
 
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
-git-tree-sha1 = "79b9563ef3f2cc5fc6d3046a5ee1a57c9de52495"
+git-tree-sha1 = "727e463cfebd0c7b999bbf3e9e7e16f254b94193"
 uuid = "34da2185-b29b-5c13-b0c7-acf172513d20"
-version = "3.33.0"
+version = "3.34.0"
 
 [[Dates]]
 deps = ["Printf"]
@@ -226,9 +226,9 @@ uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 
 [[OffsetArrays]]
 deps = ["Adapt"]
-git-tree-sha1 = "c0f4a4836e5f3e0763243b8324200af6d0e0f90c"
+git-tree-sha1 = "c870a0d713b51e4b49be6432eff0e26a4325afee"
 uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
-version = "1.10.5"
+version = "1.10.6"
 
 [[OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -270,9 +270,9 @@ uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
 version = "0.4.1"
 
 [[Reexport]]
-git-tree-sha1 = "5f6c21241f0f655da3952fd60aa18477cf96c220"
+git-tree-sha1 = "45e428421666073eab6f2da5c9d310d99bb12f9b"
 uuid = "189a3867-3050-52da-a836-e630ba90ab69"
-version = "1.1.0"
+version = "1.2.2"
 
 [[Requires]]
 deps = ["UUIDs"]
@@ -284,10 +284,10 @@ version = "1.1.3"
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 
 [[SeisSolXDMF]]
-deps = ["HDF5", "XMLDict"]
-git-tree-sha1 = "4ea4721065a3e4596b048c1095e82a961615dc63"
+deps = ["HDF5", "Pkg", "Test", "XMLDict"]
+git-tree-sha1 = "3c72c1c15263a52efefec7cb6ba3cd69690b3ed1"
 uuid = "fc3049fc-4624-4ea9-a8a9-22daae44174f"
-version = "1.0.0"
+version = "1.0.1"
 
 [[Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"

@@ -26,7 +26,7 @@ module Rasterization
     Contains all static information necessary for rasterization, as well as some computed values for convenience.
     """
     struct RasterizationContext
-        xdmf                        :: XDMFFile
+        xdmf                        :: Union{Nothing, XDMFFile}
         simplices                   :: AbstractArray{Integer, 2}
         points                      :: AbstractArray{AbstractFloat, 2}
 

@@ -28,7 +28,7 @@ function make_context(simplices, points;
                       custom_domain=((-Inf, Inf), (-Inf, Inf)),
                       max_threads=typemax(Int))
                       
-    Rasterization.RasterizationContext(simplices, points, sampling_rate, mem_limit, 
+    Rasterization.RasterizationContext(nothing, simplices, points, sampling_rate, mem_limit, 
                                        dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
                                        water_height, t_begin, t_end, times, out_filename, custom_domain, max_threads=max_threads)
 end
