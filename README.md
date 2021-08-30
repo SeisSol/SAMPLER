@@ -14,48 +14,75 @@ The recommended ways are:
 
 Afterwards, clone the SAMPLER repository to your machine (if you read this on the machine, you have already completed this step!):
 
-    git clone https://github.com/SeisSol/SAMPLER
+```bash
+git clone https://github.com/SeisSol/SAMPLER
+```
 
 _Note: In the following it is assumed that `path/to/sampler` is the installation path (the sampler folder contains this README.md file)._
+
+Then, in `path/to/sampler`, run:
+
+```bash
+path/to/sampler> julia
+julia> ]
+(@v1.x) pkg> activate .
+(SAMPLER) pkg> instantiate
+(SAMPLER) pkg> test
+```
+
+When all tests pass, SAMPLER is installed correctly.
 
 ## Usage
 Once you have installed SAMPLER and you have the SeisSol outputs in XDMF format you can run the script:
 
-    cd path/to/sampler/
-    export JULIA_NUM_THREADS=<num_threads>
-    julia --project=. src/SAMPLER.jl <options>
+```bash
+cd path/to/sampler/
+export JULIA_NUM_THREADS=<num_threads>
+julia --project=. src/SAMPLER.jl <options>
+```
 
 _Note: In Windows (PowerShell), replace `export ...` with:_
 
-    $env:JULIA_NUM_THREADS = <num_threads>
-
+```powershell
+$env:JULIA_NUM_THREADS = <num_threads>
+```
 _Note: For an explanation of the available command line options, type:_
 
-    julia --project=. src/SAMPLER.jl --help
+```bash
+julia --project=. src/SAMPLER.jl --help
+```
 
 You can also have a look at the `run_sampler.sh` and `run_kajiura.sh` scripts to see how SAMPLER can be executed on the LRZ compute clusters.
 More help for running on the cluster can be found [here][5].
 
 Once you have rasterized the SeisSol output files, you can optionally use Kajiura's filter on the outputs:
 
-    julia scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
+```bash
+julia scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
+```
 
 _Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
 
 ## Examples
 ### Basic example: Rasterize 2D grids (seafloor and sea surface data is available)
 
-    julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc ~/seissol-outputs/out-surface.xdmf
+```bash
+julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc ~/seissol-outputs/out-surface.xdmf
+```
 
 Only rasterizes the 2D surface outputs (seafloor and sea surface elevation).
 
 ### Rasterize only seafloor (and optionally apply Kajiura's Filter)
 
-    julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
-    
+```bash
+julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
+```
+
 Only rasterizes the 2D _seafloor_ elevation over time. Optionally thereafter:
-    
-    julia --project=. src/SAMPLER.jl ~/sampler-output.nc ~/kajiura-output.nc 300
+
+```bash    
+julia --project=. src/SAMPLER.jl ~/sampler-output.nc ~/kajiura-output.nc 300
+```
 
 Applies Kajiura's Filter for 300 timesteps.
 
@@ -63,7 +90,9 @@ _Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-onl
 
 ### Rasterize seafloor using Tanioka's method
 
-    julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
+```bash
+julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
+```
 
 Applies Tanioka's method while rasterizing the seafloor. Needed if bathymetry is not flat.
 
@@ -71,7 +100,9 @@ _Note: You can also use Tanioka's method when rasterizing more than just the sea
 
 ### Rasterize fully (with 3D velocity grid)
 
-    julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -s 300 ~/seissol-outputs/out-surface.xdmf
+```bash
+julia --project=. src/SAMPLER.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -s 300 ~/seissol-outputs/out-surface.xdmf
+```
 
 Rasterizes all grids and variables needed for tsunami simulation, including the 3D velocity grid.
 Only rasterizes timestep 300 (for example).
@@ -100,7 +131,9 @@ Additionally, `x`, `y` and `time` will always be output as dimensions and variab
 
 Example mapping:
 
-    --seafloor-vars "W,b=>bathy"
+```bash
+--seafloor-vars "W,b=>bathy"
+```
 
 Output `W` with the same name, remap mesh geometry height to `bathy`.
 
