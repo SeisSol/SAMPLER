@@ -1,9 +1,3 @@
-#=
-- Julia version: 1.4.0
-- Author: Maximilian Schmeller
-- Date: 2020-07-13
-=#
-
 using Interpolations
 using Base.Threads
 using Printf

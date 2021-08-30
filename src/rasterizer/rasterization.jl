@@ -1,10 +1,3 @@
-#=
-rasterization.jl:
-- Julia version: 1.4.0
-- Author: Maximilian Schmeller
-- Date: 2020-03-30
-=#
-
 module Rasterization
     using Dates: length
     using Base.Threads
