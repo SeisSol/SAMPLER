@@ -23,6 +23,7 @@ _Note: In the following it is assumed that `path/to/sampler` is the installation
 Then, in `path/to/sampler`, run:
 
 ```bash
+path/to/sampler> export JULIA_NUM_THREADS=3 # or higher
 path/to/sampler> julia
 julia> ]
 (@v1.x) pkg> activate .
