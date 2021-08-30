@@ -1,10 +1,3 @@
-#=
-sampler.jl:
-- Julia version: 1.4.0
-- Author: Maximilian Schmeller
-- Date: 2020-03-30
-=#
-
 module SAMPLER
     include("io/util.jl")
     include("io/args.jl")

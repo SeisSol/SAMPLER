@@ -7,8 +7,8 @@
 #
 # A file "file.nc" will be split into "file-disp.nc" and "file-bathy.nc" in the same directory.
 # The file itself remains untouched.
-
-module load nco
+#
+# NetCDF Operators (NCO) is required to be installed / loaded such that the commands "ncks" and "ncrename" are available.
 
 FILES=$@
 for fn in $FILES

@@ -1,9 +1,3 @@
-#=
-- Julia version: 1.4.0
-- Author: Maximilian Schmeller
-- Date: 2020-03-30
-=#
-
 module Args
     using ArgParse
     using ..Util
