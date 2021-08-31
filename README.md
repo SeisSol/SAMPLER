@@ -140,7 +140,7 @@ Output `W` with the same name, remap mesh geometry height to `bathy`.
 
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
-
+* Running in parallel (`--parallel`) is currently not working because the worker processes are not initialized correctly.
 
 [1]: http://www.seissol.org/
 [2]: https://gitlab.lrz.de/samoa/samoa

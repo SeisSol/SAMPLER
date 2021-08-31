@@ -15,18 +15,25 @@ module SAMPLER
     using ..Util
     using ..NC
 
-    const WORKER_POOL = try
-            n_workers = parse(Int, ENV["SLURM_NTASKS"])
-            worker_procs = addprocs(SlurmManager(n_workers), exclusive=""; exeflags="--project")
+    #============================================#
+    # Find and initialize workers
+    #============================================#
 
-            @everywhere include("io/util.jl")
-            @everywhere include("io/args.jl")
-            @everywhere include("rasterizer/rasterization.jl")
+    # Parsing args here and only doing this when "--parallel" is given would be better but that got
+    # dreadful very quickly. Thus left as an exercise to the reader.
+    const N_WORKERS = try
+            slurm_n_tasks = parse(Int, ENV["SLURM_NTASKS"])
+            worker_procs = addprocs(SlurmManager(slurm_n_tasks), exclusive=""; exeflags="--project")
+
+            # Initialize project and dependencies for rasterization in workers
+            @everywhere using Pkg
+            @everywhere Pkg.activate(".")
+            @everywhere import SAMPLER
             @everywhere using ..Rasterization
 
-            WorkerPool(worker_procs)
+            length(worker_procs)
         catch _
-            nothing
+            0
         end
     
     function main()
@@ -54,10 +61,10 @@ module SAMPLER
 
         is_parallel     = ARGS["parallel"]
 
-        if is_parallel && isnothing(WORKER_POOL)
-            error("Running in parallel but could not find SLURM job environment variables.")
+        if is_parallel && N_WORKERS == 0
+            error("Tried running in parallel but could not find SLURM job environment. Exiting.")
         elseif is_parallel
-            println("Running in distributed mode with $(length(WORKER_POOL)) workers.")
+            println("Running in distributed mode with $(N_WORKERS) workers.")
         else
             println("Running in serial mode.")
         end
@@ -68,7 +75,6 @@ module SAMPLER
 
         surface_output  = !seafloor_only
         volume_output   = !seafloor_only && has_3d
-
 
         #============================================#
         # Compare timesteps of 2D and 3D files.
@@ -113,7 +119,7 @@ module SAMPLER
         end
 
         #============================================#
-        # Create NetCDF output file
+        # Preprocess var mappings
         #============================================#
 
         empty_mapping    = Args.VarMapping()
@@ -124,14 +130,21 @@ module SAMPLER
             delete!(seafloor_vars, "b")
         end
 
+        #============================================================#
+        # Split work into individual jobs for floor, surface, volume
+        #============================================================#
+
         simplices_2d, points_2d = grid_of(xdmf2d)
 
+        # Seafloor, always rasterize
         contexts = [(xdmf2d, simplices_2d, points_2d, seafloor_vars, stat_var_mapping, Rasterization.z_floor, has_tanioka)]
 
+        # Sea surface
         if surface_output
             push!(contexts, (xdmf2d, simplices_2d, points_2d, surface_vars, empty_mapping, Rasterization.z_surface, false))
         end
 
+        # Volume mesh
         if volume_output
             xdmf3d = XDMFFile(ARGS["input-file-3d"])
             simplices_3d, points_3d = grid_of(xdmf3d)
@@ -139,10 +152,15 @@ module SAMPLER
             push!(contexts, (xdmf3d, simplices_3d, points_3d, volumetric_vars, empty_mapping, Rasterization.z_all, false))
         end
 
+        # Map params to RasterizationContext
         contexts = [RasterizationContext(xdmf, simps, points, sampling_rate, mem_limit, 
                                          dyn_vars, stat_vars, z_range, tanioka, water_height, 
                                          t_start, t_end, times, out_filename, domain) 
                     for (xdmf, simps, points, dyn_vars, stat_vars, z_range, tanioka) ∈ contexts]
+
+        #============================================#
+        # Create NetCDF output file (shared by all workers)
+        #============================================#
 
         ctx = contexts[1]
         create_netcdf(out_filename, 
@@ -151,22 +169,27 @@ module SAMPLER
                       ctx.times[ctx.t_begin:ctx.t_end],
                       [stat_var_mapping], [seafloor_vars, surface_vars, volumetric_vars])
 
-        rasterizer_params = [(ctx, bin(ctx)) for ctx ∈ contexts]
-
+                      
         #============================================#
         # Set up parallel workers (if enabled)
         #============================================#
+                      
+        rasterizer_params = [(ctx, bin(ctx)) for ctx ∈ contexts]
 
         if is_parallel
             parallel_rasterizer_params = []
 
             get_t_start(ctx, iter) = ctx.t_begin + (iter - 1) * ctx.n_timesteps_per_iteration
 
+            # Split jobs into their single rasterizer iterations (which can themselves include multiple timesteps!)
+            # This way, workload distribution onto workers is more granular
             for (ctx, bins) ∈ rasterizer_params
                 for iter ∈ 1:ctx.n_iterations
+                    # Calculate start and end timestep such that all timesteps can be worked on in one rasterizer iteration
                     iter_t_start = get_t_start(ctx, iter)
                     iter_t_end = min(ctx.t_end, get_t_start(ctx, iter + 1) - 1)
 
+                    # Copy rest of job context and only alter start/end timestep
                     iter_ctx = RasterizationContext(ctx.xdmf,
                         ctx.simplices, ctx.points, ctx.sampling_rate, mem_limit, 
                         ctx.dyn_var_mapping, ctx.stat_var_mapping, ctx.z_range, ctx.tanioka, ctx.water_height, 
@@ -177,14 +200,17 @@ module SAMPLER
                 end
             end
 
-            rasterizer_params = nothing
+            rasterizer_params = nothing # GC
 
+            # pmap takes list of single parameters, rasterize takes 2 params.
             function rasterize_wrapper(ctx_bins_tuple)
                 return rasterize(ctx_bins_tuple...)
             end
 
-            pmap(rasterize_wrapper, WORKER_POOL, parallel_rasterizer_params)
+            # If workers have not been initialized correctly, this will run the jobs in the main process (≈ serial mode)
+            pmap(rasterize_wrapper, parallel_rasterizer_params)
         else
+            # Serial mode (all calculations in main process)
             for (ctx, bins) ∈ rasterizer_params
                 rasterize(ctx, bins)
             end
