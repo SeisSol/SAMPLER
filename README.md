@@ -39,7 +39,7 @@ Once you have installed SAMPLER and you have the SeisSol outputs in XDMF format 
 ```bash
 cd path/to/sampler/
 export JULIA_NUM_THREADS=<num_threads>
-julia --project=. src/main.jl <options>
+julia --project src/main.jl <options>
 ```
 
 _Note: In Windows (PowerShell), replace `export ...` with:_
@@ -50,7 +50,7 @@ $env:JULIA_NUM_THREADS = <num_threads>
 _Note: For an explanation of the available command line options, type:_
 
 ```bash
-julia --project=. src/main.jl --help
+julia --project src/main.jl --help
 ```
 
 You can also have a look at the `run_sampler.sh` and `run_kajiura.sh` scripts to see how SAMPLER can be executed on the LRZ compute clusters.
@@ -68,7 +68,7 @@ _Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
 ### Basic example: Rasterize 2D grids (seafloor and sea surface data is available)
 
 ```bash
-julia --project=. src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc ~/seissol-outputs/out-surface.xdmf
+julia --project src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc ~/seissol-outputs/out-surface.xdmf
 ```
 
 Only rasterizes the 2D surface outputs (seafloor and sea surface elevation).
@@ -76,13 +76,13 @@ Only rasterizes the 2D surface outputs (seafloor and sea surface elevation).
 ### Rasterize only seafloor (and optionally apply Kajiura's Filter)
 
 ```bash
-julia --project=. src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
+julia --project src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only ~/seissol-outputs/out-surface.xdmf
 ```
 
 Only rasterizes the 2D _seafloor_ elevation over time. Optionally thereafter:
 
 ```bash    
-julia --project=. src/main.jl ~/sampler-output.nc ~/kajiura-output.nc 300
+julia --project src/main.jl ~/sampler-output.nc ~/kajiura-output.nc 300
 ```
 
 Applies Kajiura's Filter for 300 timesteps.
@@ -92,7 +92,7 @@ _Note: You can also rasterize the SeisSol outputs fully (without `--seafloor-onl
 ### Rasterize seafloor using Tanioka's method
 
 ```bash
-julia --project=. src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
+julia --project src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --seafloor-only --tanioka ~/seissol-outputs/out-surface.xdmf
 ```
 
 Applies Tanioka's method while rasterizing the seafloor. Needed if bathymetry is not flat.
@@ -102,7 +102,7 @@ _Note: You can also use Tanioka's method when rasterizing more than just the sea
 ### Rasterize fully (with 3D velocity grid)
 
 ```bash
-julia --project=. src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -s 300 ~/seissol-outputs/out-surface.xdmf
+julia --project src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc -s 300 ~/seissol-outputs/out-surface.xdmf
 ```
 
 Rasterizes all grids and variables needed for tsunami simulation, including the 3D velocity grid.
