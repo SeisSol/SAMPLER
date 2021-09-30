@@ -6,7 +6,7 @@ SAMPLER is a program for rasterizing unstructured meshes output by [SeisSol][1] 
 Additionally, it offers postprocessing options, namely depth filtering via [Kajiura's filter][3] and converting horizontal displacements to vertical ones using [Tanioka's method][7].
 
 ## Installation
-First, set up Julia on your machine.
+First, set up Julia (**v1.6 or greater**) on your machine.
 The recommended ways are:
 
 * On SuperMUC-NG: [Julia on SuperMUC-NG and HPC Systems, Getting Started][8]
