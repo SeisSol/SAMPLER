@@ -123,7 +123,7 @@ module Rasterization
 
         # Tanioka's method also needs horizontal displacements, add them if not present yet. 
         if tanioka
-            for var_name ∈ ("U", "V")
+            for var_name ∈ ("u1", "u2")
                 var_name ∈ in_vars_dyn || push!(in_vars_dyn, var_name)
             end
         end
@@ -202,7 +202,7 @@ module Rasterization
                                 Else: use existing file. If given, should contain all variable mappings of all rasterization passes.
     - `create_nc_stat_vars`:    Analogous to above.
     - `water_height`:           The offset to translate the water level to be at `z=0`.
-    - `tanioka`:                Whether to apply Tanioka's method to the bathymetry. Requires U, V, W displacements to be present in the input XDMF file.
+    - `tanioka`:                Whether to apply Tanioka's method to the bathymetry. Requires u1, u2, u3 displacements to be present in the input XDMF file.
     """
     function rasterize(
         xdmf                :: XDMFFile,
@@ -646,8 +646,8 @@ module Rasterization
                             for in_name ∈ keys(ctx.dyn_var_mapping)
                                 out_name = ctx.dyn_var_mapping[in_name]
                                 for t ∈ 1:n_times
-                                    if in_name == "W" && ctx.tanioka
-                                        tanioka_offset = (∂b∂x * itbuf.prefetched_vars["U"][simp_id, t] +  ∂b∂y * itbuf.prefetched_vars["V"][simp_id, t])
+                                    if in_name == "u3" && ctx.tanioka
+                                        tanioka_offset = (∂b∂x * itbuf.prefetched_vars["u1"][simp_id, t] +  ∂b∂y * itbuf.prefetched_vars["u2"][simp_id, t])
                                     else
                                         tanioka_offset = 0.
                                     end
