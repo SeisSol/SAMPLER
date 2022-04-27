@@ -22,7 +22,7 @@ using Base.Filesystem
         t_vals = 0:.1:2
 
         stat_maps = [Dict("b"=>"Bathy")]
-        dyn_maps = [Dict("W"=>"BtmDisp", "w"=>"BtmVel"), Dict("W"=>"TopDisp", "u"=>"TopU", "v"=>"TopV", "w"=>"TopW")]
+        dyn_maps = [Dict("u3"=>"BtmDisp", "v3"=>"BtmVel"), Dict("u3"=>"TopDisp", "v1"=>"TopU", "v2"=>"TopV", "v3"=>"TopW")]
 
         nc = NC.create_netcdf(filename, x_vals, y_vals, t_vals, stat_maps, dyn_maps)
 

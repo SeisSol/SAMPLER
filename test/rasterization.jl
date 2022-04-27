@@ -16,7 +16,7 @@ end
 function make_context(simplices, points; 
                       sampling_rate=(100., 100., 100.), 
                       mem_limit=4*1024^3, 
-                      dyn_var_mapping=Dict("W"=>"d"),
+                      dyn_var_mapping=Dict("u3"=>"d"),
                       stat_var_mapping=Dict("b"=>"b"),
                       z_range=Rasterization.z_all,
                       tanioka=false,

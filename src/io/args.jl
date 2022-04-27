@@ -162,7 +162,7 @@ module Args
                 default = "8G"
             "--tanioka"
                 help = """Apply Tanioka's method for converting horizontal displacements to vertical ones during rasterization.\n
-                                \t If the variables U or V are not found in --seafloor-vars, they will be added automatically."""
+                                \t If the variables u1 or u2 are not found in --seafloor-vars, they will be added automatically."""
                 action = :store_true
             "--seafloor-vars"
                 help = """The names of all variables that should be extracted from the 2D grid at the seafloor, separated by commas.\n
@@ -170,20 +170,20 @@ module Args
                                    the output variable.\n
                                 \t [CAUTION] You cannot have the same output name for multiple variables, 
                                    even across --seafloor-vars, --surface-vars and --volumetric-vars!\n
-                                \t Format: [M1[,M2[,...]] where Mi is either a variable name or a mapping like "W=>d".\n
-                                \t Examples: U,V,W; U,V,W=>eta; U=>X,V=>Y"""
+                                \t Format: [M1[,M2[,...]] where Mi is either a variable name or a mapping like "u3=>d".\n
+                                \t Examples: u1,u2,u3; u1,u2,u3=>eta; u1=>X,u2=>Y"""
                 arg_type = VarMapping
-                default=Dict("W"=>"d", "b"=>"b")
+                default=Dict("u3"=>"d", "b"=>"b")
             "--surface-vars"
                 help = """The names of all variables that should be extracted from the 2D grid at the sea surface, separated by commas.\n
                                 \t The same formatting rules apply as for --seafloor-vars."""
                 arg_type = VarMapping
-                default=Dict("W"=>"eta")
+                default=Dict("u3"=>"eta")
             "--volumetric-vars"
                 help = """The names of all variables that should be extracted from the 3D grid, separated by commas.\n
                                 \t The same formatting rules apply as for --seafloor-vars."""
                 arg_type = VarMapping
-                default=Dict("u"=>"u", "v"=>"v")
+                default=Dict("v1"=>"v1", "v2"=>"v2")
             "--seafloor-only"
                 help = """Only rasterize the seafloor displacements. The outputs can be processed by kajiura.jl."""
                 action = :store_true
