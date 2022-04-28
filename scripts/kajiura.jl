@@ -201,6 +201,7 @@ end
 
 println("Using $(nthreads()) threads.")
 
+import Pkg
 Pkg.precompile()
 println("Done.")
 

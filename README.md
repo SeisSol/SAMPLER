@@ -59,7 +59,7 @@ More help for running on the cluster can be found [here][5].
 Once you have rasterized the SeisSol output files, you can optionally use Kajiura's filter on the outputs:
 
 ```bash
-julia scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
+julia --project scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
 ```
 
 _Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
