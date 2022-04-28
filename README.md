@@ -152,7 +152,7 @@ ncks -v x,y,time,eta ~/sampler-output.nc ~/sampler-output-eta.nc
 
 [1]: http://www.seissol.org/
 [2]: https://gitlab.lrz.de/samoa/samoa
-[3]: https://ci.nii.ac.jp/naid/120000866529/
+[3]: https://cir.nii.ac.jp/crid/1572824499540286592
 [4]: https://julialang.org/downloads/
 [5]: https://doku.lrz.de/display/PUBLIC/Running+serial+jobs+on+the+Linux-Cluster#RunningserialjobsontheLinuxCluster-Script-drivenSLURMjobs
 [6]: https://gitlab.lrz.de/samoa/samoa/-/tree/max-bachelor
