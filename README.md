@@ -120,11 +120,11 @@ The standard mapping is:
 
 | Mesh region | Mappings    |
 |-------------|-------------|
-| Seafloor    | `W => d`    |
+| Seafloor    | `u3 => d`   |
 |             | `b => b`*   |
-| Surface     | `W => eta`  |
-| Volumetric  | `u => u`    |
-|             | `v => v`    |
+| Surface     | `u3 => eta` |
+| Volumetric  | `v1 => v1`  |
+|             | `v2 => v2`  |
 
 \* `b` is not a variable in SeisSol outputs but is understood by SAMPLER as being the geometry of the 2D mesh. Thus, you can use the `b => ...` mapping to output mesh geometry.
 
@@ -136,11 +136,19 @@ Example mapping:
 --seafloor-vars "W,b=>bathy"
 ```
 
-Output `W` with the same name, remap mesh geometry height to `bathy`.
+Output `u3` with the same name, remap mesh geometry height to `bathy`.
 
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
 
+## Vizualizing the rasterized grid with Paraview
+
+The NetCDF Reader of ParaView does not show all arrays of the rasterized file (typically only the b variable).
+To vizualize the other variables (e.g. d or eta), we can extract the variable to be vizualized into a new NetCDF with `ncks`, e.g. :
+
+```bash
+ncks -v x,y,time,eta ~/sampler-output.nc ~/sampler-output-eta.nc
+```
 
 [1]: http://www.seissol.org/
 [2]: https://gitlab.lrz.de/samoa/samoa
