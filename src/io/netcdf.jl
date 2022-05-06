@@ -36,9 +36,9 @@ module NC
 
         # `var_name` is a name of an INPUT variable. Thus, we can know which units should be assigned.
         function get_units(var_name:: String)
-            if match(r"[uvw]", var_name) !== nothing
+            if match(r"[v]", var_name) !== nothing
                 return vel_atts
-            elseif match(r"[UVW]", var_name) !== nothing
+            elseif match(r"[u]", var_name) !== nothing
                 return dist_atts
             else
                 return no_atts

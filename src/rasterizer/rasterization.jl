@@ -36,6 +36,7 @@ module Rasterization
     struct RasterizationContext
         simplices                   :: AbstractArray{Integer, 2}
         points                      :: AbstractArray{AbstractFloat, 2}
+        locationFlag                :: AbstractArray{AbstractFloat, 1}
 
         z_range                     :: ZRange
         domain                      :: NTuple{3, NTuple{2, Float64}} # (x, y, z) with (min, max) respectively
@@ -89,7 +90,7 @@ module Rasterization
         return ctx.n_dims == 3 ? (plural ? "simplices" : "simplex") : (plural ? "triangles" : "triangle") 
     end
 
-    function RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
+    function RasterizationContext(simplices, points, locationFlag, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, 
                                   tanioka, water_height, t_begin, t_end, times, out_filename, custom_domain; max_threads=typemax(Int))
 
         custom_domain                   = (custom_domain..., (-Inf, Inf)) # Add z-range
@@ -143,7 +144,7 @@ module Rasterization
 
         n_iterations                    = ceil(Int, n_timesteps / n_timesteps_per_iteration)
 
-        return RasterizationContext(simplices, points, 
+        return RasterizationContext(simplices, points, locationFlag,
                                     z_range, domain, samples, sampling_rate,
                                     dyn_var_mapping, stat_var_mapping, 
                                     in_vars_dyn, out_vars_stat, out_vars_dyn,
@@ -222,8 +223,15 @@ module Rasterization
         domain              :: DomainSize = ((-Inf, Inf),(-Inf, Inf)))
 
         simplices, points = grid_of(xdmf)
+        n_dims = size(simplices, 1) - 1
+        if n_dims==2
+            locationFlag = data_of(xdmf, 1 , "locationFlag")
+        else
+            #for volume output we use a dummy array adhering the locationFlag format in the structure RasterizationContext
+            locationFlag = fill(-1.0, (1 ,))
+        end
 
-        ctx = RasterizationContext(simplices, points, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
+        ctx = RasterizationContext(simplices, points, locationFlag, sampling_rate, mem_limit, dyn_var_mapping, stat_var_mapping, z_range, tanioka, 
                                    water_height, t_begin, t_end, times, out_filename, domain)
 
         #============================================#
@@ -332,6 +340,13 @@ module Rasterization
                 if ctx.z_range != z_all
                     is_bath = is_bathy(m3n_simp_points, ctx.water_height)
 
+                    # locationFlag==1 is the acoustic side of an elastic-acoustic interface
+                    # https://seissol.readthedocs.io/en/latest/free-surface-output.html?#variables
+                    if abs(ctx.locationFlag[simp_id]-1.0) < 1e-4
+                        l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
+                        n_excluded_z_range += 1
+                        continue
+                    end
                     if (ctx.z_range == z_floor) != is_bath
                         l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
                         n_excluded_z_range += 1
@@ -400,7 +415,7 @@ module Rasterization
         end
 
         if n_excluded_z_range != 0
-            println(n_excluded_z_range, " ", simplex_name(ctx), " are ignored due to z_range filter.")
+            println(n_excluded_z_range, " ", simplex_name(ctx), " are ignored due to z_range or locationFlag filter.")
         end
 
         println("Done.")

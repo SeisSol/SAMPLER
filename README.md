@@ -59,7 +59,7 @@ More help for running on the cluster can be found [here][5].
 Once you have rasterized the SeisSol output files, you can optionally use Kajiura's filter on the outputs:
 
 ```bash
-julia scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
+julia --project scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
 ```
 
 _Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
@@ -120,11 +120,11 @@ The standard mapping is:
 
 | Mesh region | Mappings    |
 |-------------|-------------|
-| Seafloor    | `W => d`    |
+| Seafloor    | `u3 => d`   |
 |             | `b => b`*   |
-| Surface     | `W => eta`  |
-| Volumetric  | `u => u`    |
-|             | `v => v`    |
+| Surface     | `u3 => eta` |
+| Volumetric  | `v1 => v1`  |
+|             | `v2 => v2`  |
 
 \* `b` is not a variable in SeisSol outputs but is understood by SAMPLER as being the geometry of the 2D mesh. Thus, you can use the `b => ...` mapping to output mesh geometry.
 
@@ -136,15 +136,23 @@ Example mapping:
 --seafloor-vars "W,b=>bathy"
 ```
 
-Output `W` with the same name, remap mesh geometry height to `bathy`.
+Output `u3` with the same name, remap mesh geometry height to `bathy`.
 
 ## Known Issues
 * The `--memory-limit` or `-m` argument imposes a soft limit on the memory used. Thus, choose about half of the memory available on your machine / cluster node.
 
+## Vizualizing the rasterized grid with Paraview
+
+The NetCDF Reader of ParaView does not show all arrays of the rasterized file (typically only the b variable).
+To vizualize the other variables (e.g. d or eta), we can extract the variable to be vizualized into a new NetCDF with `ncks`, e.g. :
+
+```bash
+ncks -v x,y,time,eta ~/sampler-output.nc ~/sampler-output-eta.nc
+```
 
 [1]: http://www.seissol.org/
 [2]: https://gitlab.lrz.de/samoa/samoa
-[3]: https://ci.nii.ac.jp/naid/120000866529/
+[3]: https://cir.nii.ac.jp/crid/1572824499540286592
 [4]: https://julialang.org/downloads/
 [5]: https://doku.lrz.de/display/PUBLIC/Running+serial+jobs+on+the+Linux-Cluster#RunningserialjobsontheLinuxCluster-Script-drivenSLURMjobs
 [6]: https://gitlab.lrz.de/samoa/samoa/-/tree/max-bachelor
