@@ -97,9 +97,10 @@ function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 
     Threads.@threads for x ∈ 1:nx
         for y ∈ 1:ny
             h_yx = max(0., water_level - b[y, x]) # height 0 on land
-            if (h_yx> 10.0 ) && (abs(d[y, x]) > 1e-8)
-                filter_nx_half = ceil(Int, n_h * h_max / Δx / 2)
-                filter_ny_half = ceil(Int, n_h * h_max / Δy / 2)
+            if (h_yx> 0.01 ) && (abs(d[y, x]) > 1e-8)
+                # the min is required to avoid aritacts at very shallow depth
+                filter_nx_half = min(3, ceil(Int, n_h * h_max / Δx / 2))
+                filter_ny_half = min(3, ceil(Int, n_h * h_max / Δy / 2))
 
                 xmin = max(1, x-filter_nx_half)
                 xmax = min(nx, x+filter_nx_half)
