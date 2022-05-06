@@ -141,22 +141,21 @@ function compute_filter(h_max :: Float64, Δx :: Float64, Δy :: Float64, nx :: 
 end
 
 function apply_kajiura_fft!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 2}, η::AbstractArray{Float64, 2}, 
-                h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64; water_level :: Float64 = 0., n_h :: Float64 = 20., 
-                σ = precalculate_σ(h_min, h_max, Δx, Δy; n_h=n_h))
+                h_min :: Float64, h_max :: Float64, Δx :: Float64, Δy :: Float64, filter_depth :: Float64;
+                water_level :: Float64 = 0., n_h :: Float64 = 20., σ = precalculate_σ(h_min, h_max, Δx, Δy; n_h=n_h))
     
     nx = size(η, 2)
     ny = size(η, 1)
 
-    filter = compute_filter(h_max, Δx, Δy, nx, ny, n_h)
+    filter = compute_filter(filter_depth, Δx, Δy, nx, ny, n_h)
 
     println("  Computing displacement matrix...")
     Threads.@threads for x ∈ 1:size(η, 2)
         for y ∈ 1:size(η, 1)
             h_yx = max(0., water_level - b[y, x]) # height 0 on land
-
             η[y, x] = 
                 if h_yx != 0.
-                    σ(h_yx) * Δx * Δy / h_yx^2 * d[y, x]
+                    σ(filter_depth) * Δx * Δy / filter_depth^2 * d[y, x]
                 else
                     0. # No displacement where no water is (Kajiura not applicable)
                 end
@@ -178,8 +177,8 @@ function apply_kajiura_fft!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float
 end
 
 function main()
-    if length(ARGS) != 3
-        println("Usage: julia ./kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>")
+    if length(ARGS) != 4
+        println("Usage: julia ./kajiura.jl <in_file.nc> <out_file.nc> <timestep_end> <filter_depth (0: variable, slower code)>")
         return
     end
 
@@ -188,6 +187,14 @@ function main()
     in_filename = ARGS[1]
     out_filename = ARGS[2]
     t_end = parse(Int, ARGS[3])
+    filter_depth = parse(Float64, ARGS[4])
+
+    if filter_depth!=0.
+        println("Using fft implementation with filter_depth: $(filter_depth).")
+    else
+        println("Using slow implementation with variable seafloor depth.")
+    end
+
     nc = NetCDF.open(in_filename, mode=NC_NOWRITE)
     d = nc["d"]
 
@@ -233,8 +240,12 @@ function main()
         println("Working on timestep $(t - 1) of $(t_end)")
         current_η_diff .= 0.
         current_d_diff .= d[:,:,t] .- current_disp
-        apply_kajiura!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy)
-        #apply_kajiura_fft!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy)
+
+        if filter_depth!=0.
+            apply_kajiura_fft!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy, filter_depth)
+        else
+            apply_kajiura!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy)
+        end
         current_disp = d[:,:,t]
 
         println("  Writing output for timestep")
