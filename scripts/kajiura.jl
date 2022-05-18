@@ -115,6 +115,8 @@ function apply_kajiura!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float64, 
                     end
                 end
                 η[ymin:ymax, xmin:xmax] +=  σ(h_yx) * Δx * Δy / h_yx^2 * d[y, x] * filter
+            else
+                η[y,x] =  d[y, x]
             end
         end
     end
@@ -157,7 +159,7 @@ function apply_kajiura_fft!(b::AbstractArray{Float64, 2}, d::AbstractArray{Float
                 if h_yx != 0.
                     σ(filter_depth) * Δx * Δy / filter_depth^2 * d[y, x]
                 else
-                    0. # No displacement where no water is (Kajiura not applicable)
+                    d[y, x]  # No displacement where no water is (Kajiura not applicable)
                 end
         end
     end
