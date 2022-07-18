@@ -341,9 +341,8 @@ module Rasterization
                     is_bath = is_bathy(m3n_simp_points, ctx.water_height)
 
                     # locationFlag==1 is the acoustic side of an elastic-acoustic interface
-                    # locationFlag==2 is an ordinary free surface boundary condition
                     # https://seissol.readthedocs.io/en/latest/free-surface-output.html?#variables
-                    if abs(ctx.locationFlag[simp_id]-1.0) < 1e-4 || abs(ctx.locationFlag[simp_id]-2.0) < 1e-4
+                    if abs(ctx.locationFlag[simp_id]-1.0) < 1e-4
                         l_bin_ids[simp_id] = ctx.n_threads * 2 + 1 # Unused bin, will be ignored later
                         n_excluded_z_range += 1
                         continue
