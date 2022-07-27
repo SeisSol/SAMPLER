@@ -59,7 +59,7 @@ More help for running on the cluster can be found [here][5].
 Once you have rasterized the SeisSol output files, you can optionally use Kajiura's filter on the outputs:
 
 ```bash
-julia --project scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end>
+julia --project scripts/kajiura.jl <in_file.nc> <out_file.nc> <timestep_end> <filter_depth (0: variable, slower code)>
 ```
 
 _Note: Kajiura's Filter needs to process all timesteps prior to `timestep_end`._
@@ -82,7 +82,7 @@ julia --project src/main.jl -m 8G --water-height=2000 -o ~/sampler-output.nc --s
 Only rasterizes the 2D _seafloor_ elevation over time. Optionally thereafter:
 
 ```bash    
-julia --project src/main.jl ~/sampler-output.nc ~/kajiura-output.nc 300
+julia --project src/main.jl ~/sampler-output.nc ~/kajiura-output.nc 300 0.
 ```
 
 Applies Kajiura's Filter for 300 timesteps.
