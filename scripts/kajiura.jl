@@ -222,6 +222,7 @@ function main()
     b = Array{Float64, 2}(undef, (ny, nx))
     ncread!(in_filename, "b", b)
     current_disp = zeros(ny, nx)
+    current_eta = zeros(ny, nx)
     current_η_diff = Array{Float64, 2}(undef, (ny, nx))
     current_d_diff = Array{Float64, 2}(undef, (ny, nx))
 
@@ -232,8 +233,8 @@ function main()
     xatts = Dict("units" => "m")
     yatts = Dict("units" => "m")
 
-    nccreate(out_filename, "eta_diff", "y", ly, yatts, "x", lx, xatts, "time", l_times[1:t_end+1], timeatts)
-    nccreate(out_filename, "d_diff", "y", "x", "time")
+    nccreate(out_filename, "eta", "y", ly, yatts, "x", lx, xatts, "time", l_times[1:t_end+1], timeatts)
+    nccreate(out_filename, "d", "y", "x", "time")
 
     nccreate(out_filename, "b", "y", "x")
     ncwrite(b, out_filename, "b")
@@ -249,10 +250,10 @@ function main()
             apply_kajiura!(b .+ current_disp, current_d_diff, current_η_diff, -maximum(b), -minimum(b), Δx, Δy)
         end
         current_disp = d[:,:,t]
-
+        current_eta = current_eta[:,:] + current_η_diff
         println("  Writing output for timestep")
-        ncwrite(current_d_diff, out_filename, "d_diff", start=[1,1,t], count=[-1,-1,1])
-        ncwrite(current_η_diff, out_filename, "eta_diff", start=[1,1,t], count=[-1,-1,1])
+        ncwrite(current_disp, out_filename, "d", start=[1,1,t], count=[-1,-1,1])
+        ncwrite(current_eta, out_filename, "eta", start=[1,1,t], count=[-1,-1,1])
     end
 end
 
