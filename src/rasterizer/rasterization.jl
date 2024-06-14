@@ -224,8 +224,19 @@ module Rasterization
 
         simplices, points = grid_of(xdmf)
         n_dims = size(simplices, 1) - 1
+        n_elements = size(simplices, 2)
         if n_dims==2
-            locationFlag = data_of(xdmf, 1 , "locationFlag")
+            try
+                locationFlag = data_of(xdmf, 1, "locationFlag")
+            catch e
+                if isa(e, ErrorException)
+                    println("locationFlag not found, assuming locationFlag=2...")
+                    locationFlag = fill(2.0, (n_elements,))
+                else
+                    println("Unhandled exception: ", e)
+                    rethrow(e)  # Rethrow the error if it's not a LoadError
+                end
+            end
         else
             #for volume output we use a dummy array adhering the locationFlag format in the structure RasterizationContext
             locationFlag = fill(-1.0, (1 ,))
