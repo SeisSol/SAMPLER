@@ -24,7 +24,7 @@ module NC
     For each key in those var mappings, a variable corresponding to the mapped output name of that key is created, 
     and assigned the attributes (e.g. units) of the input variable.
     """
-    function create_netcdf(filename :: AbstractString, x_vals, y_vals, t_vals,
+    function create_netcdf(filename :: AbstractString, y_vals, x_vals, t_vals,
                            static_var_mappings  :: Array{Args.VarMapping, 1}, 
                            dynamic_var_mappings :: Array{Args.VarMapping, 1}) :: NcFile
         
@@ -51,13 +51,12 @@ module NC
 
         static_vars  = []
         dynamic_vars = []
-
         for stat_mapping ∈ static_var_mappings
-            append!(static_vars,  map(in_var -> NcVar(stat_mapping[in_var], [y_dim, x_dim],        atts=get_units(in_var)), collect(keys(stat_mapping))))
+            append!(static_vars,  map(in_var -> NcVar(stat_mapping[in_var], [x_dim, y_dim],        atts=get_units(in_var)), collect(keys(stat_mapping))))
         end
 
         for dyn_mapping ∈ dynamic_var_mappings
-            append!(dynamic_vars, map(in_var -> NcVar(dyn_mapping[in_var],  [y_dim, x_dim, t_dim], atts=get_units(in_var)), collect(keys(dyn_mapping))))
+            append!(dynamic_vars, map(in_var -> NcVar(dyn_mapping[in_var],  [x_dim, y_dim, t_dim], atts=get_units(in_var)), collect(keys(dyn_mapping))))
         end
 
         
